@@ -1,0 +1,33 @@
+# systemd unit for the ZASS API + WhatsApp worker.
+#
+# Install:
+#   sudo cp deploy/zass.service /etc/systemd/system/zass.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now zass
+#
+# Logs:    sudo journalctl -u zass -f
+# Restart: sudo systemctl restart zass
+
+[Unit]
+Description=ZASS API (Express + WhatsApp message worker)
+After=network.target
+
+[Service]
+Type=simple
+User=zass
+WorkingDirectory=/srv/zass
+# The app loads /srv/zass/.env itself (via dotenv), so no EnvironmentFile here.
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node dist/server.js
+
+# Keep it alive; on a clean SIGTERM (deploys/stop) it exits 0 and is NOT
+# restarted. Graceful shutdown (worker stop + Chromium teardown) is in the app.
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

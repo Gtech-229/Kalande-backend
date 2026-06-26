@@ -1,0 +1,339 @@
+// Prisma schema for ZASS.
+//
+// Neon (serverless PostgreSQL) needs two connection strings:
+//   - url       -> DATABASE_URL : pooled connection, used by the running app
+//   - directUrl -> DIRECT_URL   : direct connection, used by migrations
+//
+// Run migrations with: npx prisma migrate dev --name <description>
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+// Account roles. Drives all authorization across the app.
+enum Role {
+  ADMIN // whole school; exactly one allowed
+  SUPERVISOR // one class only
+  OPERATOR // enrolls students into authorized classes
+}
+
+model User {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft delete: set instead of hard-deleting (CLAUDE.md). Null = active.
+  deletedAt DateTime?
+
+  name     String
+  email    String @unique
+  password String // bcrypt hash — never store plaintext
+  role     Role
+
+  // Home class this user belongs to (SUPERVISOR/OPERATOR). Null for ADMIN.
+  // If the class is deleted, the link is cleared (SetNull) — the user remains.
+  classId Int?
+  class   Class? @relation("UserClass", fields: [classId], references: [id], onDelete: SetNull)
+
+  // The class this user supervises (SUPERVISOR only). Inverse side of
+  // Class.supervisor — one supervisor supervises at most one class.
+  supervisedClass Class? @relation("ClassSupervisor")
+
+  // A user can have many refresh tokens (one per device/session).
+  tokens Token[]
+
+  // Outstanding password reset tokens (forgot-password flow).
+  passwordResetTokens PasswordResetToken[]
+
+  // Audit trail of transactional emails sent to this user.
+  emailLogs EmailLog[]
+
+  // Students this user (Admin or Operator) enrolled.
+  createdStudents Student[] @relation("StudentCreatedBy")
+
+  // Classes an OPERATOR is authorized to enroll students into (pivot rows).
+  operatorClasses OperatorClass[] @relation("OperatorClasses")
+
+  // Attendance sessions this user (a SUPERVISOR) submitted.
+  submittedAttendance Attendance[] @relation("AttendanceSubmittedBy")
+
+  // WhatsApp messages this user (Admin or Supervisor) triggered.
+  sentMessages MessageHistory[] @relation("MessageSentBy")
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([classId])
+}
+
+model Class {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft delete: set instead of hard-deleting (CLAUDE.md). Null = active.
+  deletedAt DateTime?
+
+  name String @unique
+
+  // The single supervisor of this class. @unique enforces "1 supervisor = 1
+  // class". SetNull: if the supervisor account is deleted, the class survives.
+  supervisorId Int?  @unique
+  supervisor   User? @relation("ClassSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+
+  // Users whose home class is this one (the supervisor + any operators).
+  members User[] @relation("UserClass")
+
+  // Students enrolled in this class.
+  students Student[]
+
+  // Operators authorized to enroll students into this class (pivot rows).
+  operators OperatorClass[] @relation("ClassOperators")
+
+  // Attendance records belonging to this class.
+  attendance Attendance[]
+
+  // supervisorId already has a unique index from @unique, so no extra @@index.
+}
+
+// Lifecycle of a student. Only ACTIVE students appear in the call list; the
+// other statuses keep them in the database for history (APP_CONTEXT.md).
+enum StudentStatus {
+  ACTIVE
+  TRANSFERRED
+  EXPELLED
+  GRADUATED
+  DROPOUT
+}
+
+model Student {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft delete: set instead of hard-deleting (CLAUDE.md). Null = active row.
+  // Distinct from `status`, which is the academic lifecycle, not a deletion.
+  deletedAt DateTime?
+
+  firstName      String
+  lastName       String
+  birthDate      DateTime
+  parentName     String
+  parentWhatsapp String // international format, e.g. +2250700000000
+
+  status StudentStatus @default(ACTIVE)
+
+  // The class the student is enrolled in. Restrict: a class with students
+  // cannot be (hard) deleted (APP_CONTEXT.md).
+  classId Int
+  class   Class @relation(fields: [classId], references: [id], onDelete: Restrict)
+
+  // Who enrolled this student (Admin or Operator). SetNull keeps the record if
+  // that account is later removed.
+  createdById Int?
+  createdBy   User? @relation("StudentCreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+
+  // Attendance records for this student.
+  attendance Attendance[]
+
+  // WhatsApp messages about this student.
+  messages MessageHistory[]
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([createdById])
+  // Composite index for the hot path: load a class's active call list.
+  @@index([classId, status])
+}
+
+// Pivot: which classes an OPERATOR may enroll students into. Checked before
+// every student insertion by an operator (APP_CONTEXT.md).
+//
+// NOTE: kept as a surrogate-id model (not a composite PK) to follow the
+// "all models have id/createdAt/updatedAt" rule (CLAUDE.md). The (operatorId,
+// classId) pair is enforced unique instead, which gives the same guarantee.
+model OperatorClass {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  operatorId Int
+  operator   User @relation("OperatorClasses", fields: [operatorId], references: [id], onDelete: Cascade)
+
+  classId Int
+  class   Class @relation("ClassOperators", fields: [classId], references: [id], onDelete: Cascade)
+
+  // One authorization row per (operator, class) pair.
+  @@unique([operatorId, classId])
+  // Index on every foreign key field (CLAUDE.md). operatorId is already covered
+  // by the leading column of the @@unique index above.
+  @@index([classId])
+}
+
+model Token {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  token     String   @unique
+  expiresAt DateTime
+
+  // Foreign key to the owning user.
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([userId])
+}
+
+// One-time password reset token (forgot-password flow). The raw token is emailed
+// to the user; we store only its SHA-256 hash, so a DB leak can't reset accounts.
+model PasswordResetToken {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  token     String    @unique // SHA-256 hash of the raw token
+  expiresAt DateTime
+  // Set when the token is consumed — a token can be used at most once.
+  usedAt    DateTime?
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([userId])
+}
+
+// Which transactional email was sent.
+enum EmailType {
+  WELCOME // new account credentials
+  PASSWORD_RESET // forgot-password link
+}
+
+// Outcome of an email send attempt.
+enum EmailStatus {
+  SENT
+  FAILED
+}
+
+// Append-only audit trail of transactional emails. Stores NO secrets and NO body
+// (the welcome password / reset token are never persisted here) — only who was
+// emailed, what kind, and whether it went out. Lets an admin spot a failed send
+// and trigger a resend. Not soft-deleted: it is a log, never user data.
+model EmailLog {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  recipient String // email address it was sent to
+  type      EmailType
+  status    EmailStatus
+  error     String? // provider error message when FAILED
+  sentAt    DateTime? // set when status is SENT
+
+  userId Int?
+  user   User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([userId])
+  @@index([type])
+}
+
+// Whether a student was present or absent for a given session.
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
+// Which part of the day the call covers.
+enum AttendancePeriod {
+  MATIN
+  MIDI
+  SOIR
+}
+
+// One row per student per session (period + subject + date). The whole class's
+// call is recorded at once via POST /attendance/submit (APP_CONTEXT.md).
+model Attendance {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft delete: never hard-delete records (CLAUDE.md). Null = active row.
+  deletedAt DateTime?
+
+  // The student this row is about. Cascade: removing a student removes its rows.
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  // The class the call belongs to. Cascade with the class.
+  classId Int
+  class   Class @relation(fields: [classId], references: [id], onDelete: Cascade)
+
+  // The SUPERVISOR who validated the call. SetNull keeps the record if removed.
+  submittedById Int?
+  submittedBy   User? @relation("AttendanceSubmittedBy", fields: [submittedById], references: [id], onDelete: SetNull)
+
+  status  AttendanceStatus
+  period  AttendancePeriod
+  subject String // e.g. Coran, Arabe, Français, Maths
+  date    DateTime @db.Date
+
+  // ANTI-DOUBLE-SUBMIT: one record per student, period, subject and date.
+  @@unique([studentId, period, subject, date], name: "unique_student_attendance_session")
+  // Index on every foreign key field (CLAUDE.md). studentId lookups are served
+  // by the leading column of the @@unique index above, so no separate index.
+  @@index([classId])
+  @@index([submittedById])
+  // Hot path: history filtered by day.
+  @@index([date])
+}
+
+// Why a WhatsApp message was sent (APP_CONTEXT.md).
+enum MessageType {
+  ABSENCE // automatic absence alert from the call
+  PERSONNALISE // manual message to one parent
+  GROUPE_CLASSE // manual broadcast to a whole class
+  GROUPE_ECOLE // manual broadcast to the whole school
+}
+
+// Delivery state of a WhatsApp message. Rows start PENDING and are processed by
+// the background worker into one terminal state.
+enum MessageStatus {
+  PENDING
+  SENT
+  FAILED_INVALID_NUMBER
+  FAILED_SESSION_CLOSED
+}
+
+// History of every WhatsApp message — automatic alerts and manual sends. Also
+// acts as the delivery queue: PENDING rows are the worker's backlog.
+model MessageHistory {
+  id        Int       @id @default(autoincrement())
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  // Soft delete: never hard-delete records (CLAUDE.md). Null = active row.
+  deletedAt DateTime?
+
+  // The student this message is about. Null for school-wide announcements.
+  studentId Int?
+  student   Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+
+  parentWhatsapp String
+  messageText    String        @db.Text
+  messageType    MessageType
+  status         MessageStatus @default(PENDING)
+
+  // Set when the message actually goes out (status becomes SENT).
+  sentAt DateTime?
+
+  // Who triggered the send (Admin or Supervisor). SetNull keeps the record.
+  sentById Int?
+  sentBy   User? @relation("MessageSentBy", fields: [sentById], references: [id], onDelete: SetNull)
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([studentId])
+  @@index([sentById])
+  // Hot path: the worker scans by status (APP_CONTEXT idx_msg_status).
+  @@index([status])
+}
