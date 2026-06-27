@@ -69,6 +69,7 @@ export async function initWhatsApp(): Promise<void> {
 
   client.on("qr", (qr) => {
     state = "QR";
+    // Store a data-URL for the admin status endpoint (UI scanning).
     qrcode
       .toDataURL(qr)
       .then((url) => {
@@ -77,8 +78,16 @@ export async function initWhatsApp(): Promise<void> {
       .catch((error) => {
         logger.error("Failed to render WhatsApp QR", { error });
       });
+    // Also print a scannable QR to stdout — handy for first-time linking when
+    // running the app in the foreground over SSH. Best-effort.
+    qrcode
+      .toString(qr, { type: "terminal", small: true })
+      .then((ascii) => process.stdout.write(`\n${ascii}\n`))
+      .catch(() => {
+        /* terminal QR is optional */
+      });
     logger.info(
-      "WhatsApp QR ready — scan it via GET /api/messages/whatsapp/status"
+      "WhatsApp QR ready — scan the terminal QR, or via GET /api/messages/whatsapp/status"
     );
   });
 
