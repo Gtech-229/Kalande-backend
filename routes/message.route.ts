@@ -40,4 +40,12 @@ router.get(
   messageController.getWhatsAppStatus
 );
 
+// Admin-only: unlink the current account and emit a fresh QR (re-link / change
+// the sending number) — drives the same QR screen as status.
+router.post(
+  "/whatsapp/logout",
+  authorize(Role.ADMIN),
+  messageController.logoutWhatsApp
+);
+
 export default router;

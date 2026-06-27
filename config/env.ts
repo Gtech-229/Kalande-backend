@@ -11,6 +11,20 @@ import { z } from "zod";
  *
  * Import the typed `env` object anywhere instead of reading process.env.
  */
+
+/**
+ * Wrap an OPTIONAL env schema so a blank / whitespace-only value (e.g.
+ * `SMTP_HOST=` in .env) is treated as "not set" (undefined) instead of failing
+ * validation. This lets you disable an optional feature by leaving its line
+ * empty, rather than having to delete the line (which previously crashed boot).
+ */
+const blankAsUndefined = <T extends z.ZodTypeAny>(schema: T) =>
+  z.preprocess(
+    (value) =>
+      typeof value === "string" && value.trim() === "" ? undefined : value,
+    schema
+  );
+
 const envSchema = z.object({
   // Runtime environment. Defaults to "development" if not set.
   NODE_ENV: z
@@ -46,9 +60,9 @@ const envSchema = z.object({
   APP_RESET_URL: z.string().url().default("http://localhost:8080/reset-password"),
 
   // --- Email (nodemailer SMTP) ---
-  // Optional: if SMTP_HOST is unset, the app falls back to the log-only email
-  // provider (nothing is actually sent), which is handy in development.
-  SMTP_HOST: z.string().min(1).optional(),
+  // Optional: if SMTP_HOST is unset OR blank, the app falls back to the log-only
+  // email provider (nothing is actually sent), which is handy in development.
+  SMTP_HOST: blankAsUndefined(z.string().min(1).optional()),
   SMTP_PORT: z.coerce.number().int().positive().default(587),
   // true only for implicit TLS (port 465). Parsed from "true"/"false" — never
   // z.coerce.boolean(), which treats any non-empty string as true.
@@ -56,8 +70,8 @@ const envSchema = z.object({
     .enum(["true", "false"])
     .transform((value) => value === "true")
     .default("false"),
-  SMTP_USER: z.string().min(1).optional(),
-  SMTP_PASS: z.string().min(1).optional(),
+  SMTP_USER: blankAsUndefined(z.string().min(1).optional()),
+  SMTP_PASS: blankAsUndefined(z.string().min(1).optional()),
   // The From header on outgoing emails (e.g. `ZASS <no-reply@zass.com>`).
   EMAIL_FROM: z.string().min(1).default("ZASS <no-reply@zass.local>"),
 
@@ -72,15 +86,15 @@ const envSchema = z.object({
   // Folder where the WhatsApp session is persisted (LocalAuth). Survives
   // restarts so the QR only needs scanning once. Must be on durable disk.
   WHATSAPP_SESSION_PATH: z.string().min(1).default(".wwebjs_auth"),
-  // Optional path to a system Chromium (e.g. /usr/bin/chromium). Leave unset to
-  // use the Chromium that Puppeteer downloads with whatsapp-web.js.
-  PUPPETEER_EXECUTABLE_PATH: z.string().min(1).optional(),
+  // Optional path to a system Chromium (e.g. /usr/bin/chromium). Leave unset or
+  // blank to use the Chromium that Puppeteer downloads with whatsapp-web.js.
+  PUPPETEER_EXECUTABLE_PATH: blankAsUndefined(z.string().min(1).optional()),
 
   // --- Admin bootstrap (used ONLY by prisma/seed.ts) ---
   // Optional so the server can boot without them; the seed checks they exist.
   ADMIN_NAME: z.string().min(1).default("Administrator"),
-  ADMIN_EMAIL: z.string().email().optional(),
-  ADMIN_PASSWORD: z.string().min(8).optional(),
+  ADMIN_EMAIL: blankAsUndefined(z.string().email().optional()),
+  ADMIN_PASSWORD: blankAsUndefined(z.string().min(8).optional()),
 });
 
 const parsed = envSchema.safeParse(process.env);

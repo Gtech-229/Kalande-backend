@@ -126,6 +126,37 @@ export async function destroyWhatsApp(): Promise<void> {
 }
 
 /**
+ * Log out the current WhatsApp account (unlink the device + clear the saved
+ * session), then re-initialize so a fresh QR is emitted for linking a new
+ * number. Returns immediately; the new QR arrives via the "qr" event — the
+ * admin polls getWhatsAppStatus() to fetch it.
+ */
+export async function resetWhatsAppSession(): Promise<void> {
+  if (client) {
+    try {
+      await client.logout();
+    } catch {
+      // May already be disconnected — ignore and continue to a clean re-init.
+    }
+    try {
+      await client.destroy();
+    } catch {
+      // Best-effort teardown.
+    }
+    client = null;
+  }
+
+  state = "INITIALIZING";
+  currentQr = null;
+
+  // Re-init in the background so the HTTP response is not blocked by Chromium
+  // startup; the fresh QR shows up via getWhatsAppStatus() shortly after.
+  void initWhatsApp().catch((error) => {
+    logger.error("WhatsApp re-init after logout failed", { error });
+  });
+}
+
+/**
  * Send one text message. Never throws — returns the outcome so the worker can
  * record it per message:
  * - not connected      -> FAILED_SESSION_CLOSED (left PENDING-able / retried)

@@ -58,3 +58,19 @@ export const getWhatsAppStatus = asyncHandler(
     res.status(200).json({ success: true, data });
   }
 );
+
+/**
+ * @description Log out WhatsApp and start a fresh link (emits a new QR)
+ * @route   POST /api/messages/whatsapp/logout
+ * @access  ADMIN
+ * **/
+
+export const logoutWhatsApp = asyncHandler(
+  async (_req: Request, res: Response) => {
+    await messageService.logoutWhatsApp();
+    res.status(200).json({
+      success: true,
+      data: { message: "WhatsApp logged out — scan the new QR to re-link" },
+    });
+  }
+);

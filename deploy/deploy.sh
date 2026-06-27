@@ -27,7 +27,9 @@ else
 fi
 
 echo "==> Installing dependencies (incl. dev deps, needed to build)"
-sudo -u "$APP_USER" npm ci
+# Skip Puppeteer's bundled Chromium download — we use the system Chromium via
+# PUPPETEER_EXECUTABLE_PATH. Saves ~150 MB and time on every deploy.
+sudo -u "$APP_USER" env PUPPETEER_SKIP_DOWNLOAD=true npm ci
 
 echo "==> Applying database migrations"
 sudo -u "$APP_USER" npm run db:migrate:deploy

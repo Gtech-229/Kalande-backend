@@ -8,7 +8,7 @@ import {
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
 import { messageProvider } from "../lib/message-provider";
-import { getWhatsAppStatus } from "../config/whatsapp";
+import { getWhatsAppStatus, resetWhatsAppSession } from "../config/whatsapp";
 import { sleep } from "../utils/sleep";
 import { formatDateFr } from "../utils/date";
 import { getClassForSupervisor } from "./class.service";
@@ -310,4 +310,16 @@ export async function getHistory(
  */
 export function whatsAppStatus(): ReturnType<typeof getWhatsAppStatus> {
   return getWhatsAppStatus();
+}
+
+/**
+ * Log out the linked WhatsApp account and start a fresh link (a new QR is then
+ * available via whatsAppStatus()). Lets an admin change the sending number or
+ * recover from a logout entirely from the app — no server access needed.
+ */
+export async function logoutWhatsApp(): Promise<void> {
+  if (getWhatsAppStatus().state === "DISABLED") {
+    throw new AppError(400, "WHATSAPP_DISABLED", "WhatsApp is not enabled");
+  }
+  await resetWhatsAppSession();
 }

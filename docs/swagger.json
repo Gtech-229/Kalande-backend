@@ -634,7 +634,7 @@
       "get": {
         "tags": ["Messages"],
         "summary": "WhatsApp connection status + QR to scan when linking (ADMIN)",
-        "description": "When `state` is `QR`, render the `qr` data-URL and scan it from the linked phone. When `CONNECTED`, `qr` is null.",
+        "description": "When `state` is `QR`, render the `qr` data-URL and scan it from the linked phone. When `CONNECTED`, `qr` is null. Poll this (every ~3-5s) on the linking screen until `CONNECTED`.",
         "responses": {
           "200": {
             "description": "Connection status",
@@ -648,6 +648,25 @@
               }
             }
           }
+        }
+      }
+    },
+    "/api/messages/whatsapp/logout": {
+      "post": {
+        "tags": ["Messages"],
+        "summary": "Log out WhatsApp and start a fresh link (ADMIN)",
+        "description": "Unlinks the current WhatsApp account and re-initializes so a new QR is emitted. Use to change the sending number or recover from a logout. After calling this, poll `GET /messages/whatsapp/status` until `state` becomes `QR`, show the QR, then poll until `CONNECTED`.",
+        "responses": {
+          "200": {
+            "description": "Logged out; a new QR will be available shortly via the status endpoint",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "message": { "type": "string" } } } } },
+                "example": { "success": true, "data": { "message": "WhatsApp logged out — scan the new QR to re-link" } }
+              }
+            }
+          },
+          "400": { "$ref": "#/components/responses/Error", "description": "WhatsApp is not enabled" }
         }
       }
     }
