@@ -1,0 +1,1047 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "ZASS API",
+    "version": "1.0.0",
+    "description": "REST API for ZASS — school attendance management with WhatsApp alerts.\n\n**Auth:** Bearer access token in the `Authorization` header (`Authorization: Bearer <accessToken>`). Access tokens are short-lived (15m); refresh via `POST /api/auth/refresh`.\n\n**Response envelope:** every endpoint returns `{ \"success\": true, \"data\": ... }` on success, or `{ \"success\": false, \"error\": { \"message\", \"code\", \"fields?\" } }` on error. `GET /health` is the only exception.\n\n**Roles:** `ADMIN` (whole school), `SUPERVISOR` (one class), `OPERATOR` (enrolls students into authorized classes)."
+  },
+  "servers": [
+    { "url": "https://api.kalande.net", "description": "Production" },
+    { "url": "http://localhost:8000", "description": "Local development" }
+  ],
+  "tags": [
+    { "name": "Auth", "description": "Registration, login, tokens, password flows" },
+    { "name": "Users", "description": "Admin management of supervisor/operator accounts" },
+    { "name": "Classes", "description": "Classes and their supervisor" },
+    { "name": "Operators", "description": "Which classes an operator may enroll into" },
+    { "name": "Students", "description": "Student enrollment and updates" },
+    { "name": "Attendance", "description": "The supervisor's daily call" },
+    { "name": "Dashboard", "description": "Aggregated stats" },
+    { "name": "Messages", "description": "WhatsApp messaging + connection status" },
+    { "name": "System", "description": "Health" }
+  ],
+  "security": [{ "bearerAuth": [] }],
+  "paths": {
+    "/health": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Health check (not the standard envelope)",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Service is up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "env": { "type": "string", "example": "production" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/register": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Register the single ADMIN account (only one allowed)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RegisterRequest" },
+              "example": { "name": "Directeur ZASS", "email": "admin@kalande.net", "password": "Admin#2026" }
+            }
+          }
+        },
+        "responses": {
+          "201": { "$ref": "#/components/responses/AuthResult" },
+          "409": { "$ref": "#/components/responses/Error", "description": "An admin already exists, or the email is taken" },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/auth/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Log in with email + password",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/LoginRequest" },
+              "example": { "email": "admin@kalande.net", "password": "Admin#2026" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/AuthResult" },
+          "401": { "$ref": "#/components/responses/Error", "description": "Invalid email or password" },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/auth/refresh": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Exchange a refresh token for a new token pair (rotation)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RefreshRequest" },
+              "example": { "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "A new access + refresh token pair",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/EnvelopeTokenPair" },
+                "example": { "success": true, "data": { "accessToken": "eyJ...", "refreshToken": "eyJ..." } }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error", "description": "Refresh token invalid, expired, or revoked" }
+        }
+      }
+    },
+    "/api/auth/logout": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Revoke a refresh token (logout)",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RefreshRequest" },
+              "example": { "refreshToken": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9..." }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Logged out (idempotent)" }
+        }
+      }
+    },
+    "/api/auth/forgot-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Start a password reset — emails a reset link if the account exists",
+        "description": "Always returns the same response whether or not the email exists (no account enumeration).",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ForgotPasswordRequest" },
+              "example": { "email": "superviseur@kalande.net" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "If the account exists, a reset email was sent" }
+        }
+      }
+    },
+    "/api/auth/reset-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Finish a password reset using the emailed token",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ResetPasswordRequest" },
+              "example": { "token": "a1b2c3d4e5f6...", "newPassword": "Nouveau#2026" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Password updated" },
+          "400": { "$ref": "#/components/responses/Error", "description": "Reset token invalid or expired" }
+        }
+      }
+    },
+    "/api/auth/change-password": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Change your own password (authenticated)",
+        "description": "Revokes all refresh tokens, so other sessions must log in again.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChangePasswordRequest" },
+              "example": { "currentPassword": "Admin#2026", "newPassword": "Admin#2027" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Password updated" },
+          "401": { "$ref": "#/components/responses/Error", "description": "Current password incorrect / not authenticated" }
+        }
+      }
+    },
+    "/api/users": {
+      "get": {
+        "tags": ["Users"],
+        "summary": "List users (ADMIN)",
+        "parameters": [
+          { "name": "role", "in": "query", "schema": { "$ref": "#/components/schemas/Role" }, "description": "Filter by role" },
+          { "name": "assigned", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "true = has a class, false = available (no class). Used to list assignable supervisors." }
+        ],
+        "responses": {
+          "200": {
+            "description": "Users matching the filters",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublicUser" } } } },
+                "example": { "success": true, "data": [{ "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net", "role": "SUPERVISOR", "classId": null }] }
+              }
+            }
+          },
+          "401": { "$ref": "#/components/responses/Error" },
+          "403": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "post": {
+        "tags": ["Users"],
+        "summary": "Create a SUPERVISOR or OPERATOR account (ADMIN)",
+        "description": "No password is sent: the server generates one, stores its hash, and emails it (welcome email). The account starts with no class.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateUserRequest" },
+              "example": { "name": "M. Diallo", "email": "diallo@kalande.net", "role": "SUPERVISOR" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created account",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/PublicUser" } } },
+                "example": { "success": true, "data": { "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net", "role": "SUPERVISOR", "classId": null } }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Error", "description": "Email already registered" },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/users/{id}/resend-welcome": {
+      "post": {
+        "tags": ["Users"],
+        "summary": "Regenerate the password and resend the welcome email (ADMIN)",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Welcome email resent" },
+          "404": { "$ref": "#/components/responses/Error", "description": "User not found" },
+          "400": { "$ref": "#/components/responses/Error", "description": "Target is an admin (welcome emails are for supervisors/operators)" }
+        }
+      }
+    },
+    "/api/classes": {
+      "get": {
+        "tags": ["Classes"],
+        "summary": "List all classes with their supervisor (ADMIN)",
+        "responses": {
+          "200": {
+            "description": "Classes",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/ClassWithSupervisor" } } } },
+                "example": { "success": true, "data": [{ "id": 1, "name": "CP-A", "createdAt": "2026-06-25T10:00:00.000Z", "supervisor": { "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net" } }] }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Classes"],
+        "summary": "Create a class and assign an existing supervisor (ADMIN)",
+        "description": "`supervisorId` must be a SUPERVISOR account not already assigned to a class. Fetch candidates via GET /api/users?role=SUPERVISOR&assigned=false.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateClassRequest" },
+              "example": { "name": "CP-A", "supervisorId": 2 }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created class",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/ClassWithSupervisor" } } },
+                "example": { "success": true, "data": { "id": 1, "name": "CP-A", "createdAt": "2026-06-25T10:00:00.000Z", "supervisor": { "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net" } } }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Supervisor not found" },
+          "409": { "$ref": "#/components/responses/Error", "description": "Class name taken, or supervisor already assigned" },
+          "400": { "$ref": "#/components/responses/Error", "description": "Selected user is not a SUPERVISOR" }
+        }
+      }
+    },
+    "/api/classes/{id}": {
+      "delete": {
+        "tags": ["Classes"],
+        "summary": "Soft-delete a class (ADMIN)",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Class deleted" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Class not found" }
+        }
+      }
+    },
+    "/api/classes/{id}/available-operators": {
+      "get": {
+        "tags": ["Classes"],
+        "summary": "List operators that can still be assigned to this class (ADMIN)",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "responses": {
+          "200": {
+            "description": "Operators not yet authorized for the class",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/AvailableOperator" } } } },
+                "example": { "success": true, "data": [{ "id": 5, "name": "Mme Koné", "email": "kone@kalande.net" }] }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Class not found" }
+        }
+      }
+    },
+    "/api/operators/{operatorId}/classes": {
+      "get": {
+        "tags": ["Operators"],
+        "summary": "List the classes an operator may enroll into (ADMIN)",
+        "parameters": [{ "$ref": "#/components/parameters/OperatorIdPath" }],
+        "responses": {
+          "200": {
+            "description": "Authorized classes",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/AuthorizedClass" } } } },
+                "example": { "success": true, "data": [{ "classId": 1, "className": "CP-A", "assignedAt": "2026-06-25T10:05:00.000Z" }] }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Operator not found" },
+          "400": { "$ref": "#/components/responses/Error", "description": "User is not an OPERATOR" }
+        }
+      },
+      "post": {
+        "tags": ["Operators"],
+        "summary": "Authorize an operator for a class (ADMIN)",
+        "parameters": [{ "$ref": "#/components/parameters/OperatorIdPath" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/AssignClassRequest" },
+              "example": { "classId": 1 }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Authorization created",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AuthorizedClass" } } },
+                "example": { "success": true, "data": { "classId": 1, "className": "CP-A", "assignedAt": "2026-06-25T10:05:00.000Z" } }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Operator or class not found" },
+          "409": { "$ref": "#/components/responses/Error", "description": "Already authorized" }
+        }
+      }
+    },
+    "/api/operators/{operatorId}/classes/{classId}": {
+      "delete": {
+        "tags": ["Operators"],
+        "summary": "Revoke an operator's authorization for a class (ADMIN)",
+        "parameters": [
+          { "$ref": "#/components/parameters/OperatorIdPath" },
+          { "name": "classId", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Authorization removed" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Authorization not found" }
+        }
+      }
+    },
+    "/api/students": {
+      "get": {
+        "tags": ["Students"],
+        "summary": "List students (ADMIN, OPERATOR)",
+        "parameters": [
+          { "name": "classId", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/StudentStatus" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Students",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/Student" } } } },
+                "example": { "success": true, "data": [{ "id": 10, "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "birthDate": "2015-05-01T00:00:00.000Z", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000", "status": "ACTIVE", "createdById": 1, "createdAt": "2026-06-25T11:00:00.000Z" }] }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": ["Students"],
+        "summary": "Enroll a student (ADMIN, OPERATOR)",
+        "description": "An OPERATOR may only enroll into classes they are authorized for. New students are always ACTIVE.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateStudentRequest" },
+              "example": { "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "birthDate": "2015-05-01", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Enrolled student",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/Student" } } }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error", "description": "Operator not authorized for this class" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Class not found" },
+          "400": { "$ref": "#/components/responses/ValidationError" }
+        }
+      }
+    },
+    "/api/students/{id}": {
+      "put": {
+        "tags": ["Students"],
+        "summary": "Update a student's info and/or status (ADMIN, OPERATOR)",
+        "description": "All fields optional; at least one required. An OPERATOR may only update students in authorized classes.",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateStudentRequest" },
+              "example": { "status": "TRANSFERRED", "parentWhatsapp": "+2250700000001" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated student",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/Student" } } }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error", "description": "Operator not authorized for this class" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Student not found" }
+        }
+      }
+    },
+    "/api/attendance/students": {
+      "get": {
+        "tags": ["Attendance"],
+        "summary": "Active students of the supervisor's class — the call list (SUPERVISOR)",
+        "responses": {
+          "200": {
+            "description": "Call list",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/CallListStudent" } } } },
+                "example": { "success": true, "data": [{ "id": 10, "firstName": "Ahmed", "lastName": "Touré", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000" }] }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error", "description": "You are not assigned to a class" }
+        }
+      }
+    },
+    "/api/attendance/submit": {
+      "post": {
+        "tags": ["Attendance"],
+        "summary": "Validate the whole call for your class (SUPERVISOR)",
+        "description": "Send only the absent student ids; everyone else active is marked PRESENT. The class is derived from the supervisor (not sent). Triggers WhatsApp absence alerts asynchronously. `date` defaults to today.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SubmitAttendanceRequest" },
+              "example": { "period": "MATIN", "subject": "Coran", "date": "2026-06-25", "absents": [10, 27] }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Call recorded",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AttendanceSummary" } } },
+                "example": { "success": true, "data": { "classId": 1, "className": "CP-A", "period": "MATIN", "subject": "Coran", "date": "2026-06-25T00:00:00.000Z", "total": 25, "presentCount": 23, "absentCount": 2, "absentStudentIds": [10, 27] } }
+              }
+            }
+          },
+          "409": { "$ref": "#/components/responses/Error", "description": "Call already submitted for this period/subject/date" },
+          "400": { "$ref": "#/components/responses/Error", "description": "No active students, or an absent id is not in the class" },
+          "403": { "$ref": "#/components/responses/Error", "description": "You are not assigned to a class" }
+        }
+      }
+    },
+    "/api/attendance/history": {
+      "get": {
+        "tags": ["Attendance"],
+        "summary": "Your class's attendance history (SUPERVISOR)",
+        "parameters": [
+          { "name": "date", "in": "query", "schema": { "type": "string", "format": "date" }, "example": "2026-06-25" },
+          { "name": "period", "in": "query", "schema": { "$ref": "#/components/schemas/AttendancePeriod" } },
+          { "name": "subject", "in": "query", "schema": { "type": "string" }, "example": "Coran" }
+        ],
+        "responses": {
+          "200": {
+            "description": "History rows",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/AttendanceHistoryRow" } } } },
+                "example": { "success": true, "data": [{ "id": 100, "studentId": 10, "studentName": "Ahmed Touré", "status": "ABSENT", "period": "MATIN", "subject": "Coran", "date": "2026-06-25T00:00:00.000Z" }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/admin": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Whole-school stats (ADMIN)",
+        "responses": {
+          "200": {
+            "description": "Admin dashboard",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AdminDashboard" } } },
+                "example": { "success": true, "data": { "classes": 6, "students": { "active": 142, "total": 150 }, "supervisors": 6, "operators": 2, "today": { "date": "2026-06-25T00:00:00.000Z", "present": 120, "absent": 22 } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/dashboard/supervisor": {
+      "get": {
+        "tags": ["Dashboard"],
+        "summary": "Your class stats + today's call status (SUPERVISOR)",
+        "responses": {
+          "200": {
+            "description": "Supervisor dashboard",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/SupervisorDashboard" } } },
+                "example": { "success": true, "data": { "class": { "id": 1, "name": "CP-A" }, "activeStudents": 25, "today": { "date": "2026-06-25T00:00:00.000Z", "present": 23, "absent": 2, "submitted": true, "sessions": 1 } } }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error", "description": "You are not assigned to a class" }
+        }
+      }
+    },
+    "/api/messages/send": {
+      "post": {
+        "tags": ["Messages"],
+        "summary": "Queue a WhatsApp message (ADMIN, SUPERVISOR)",
+        "description": "Discriminated by `target`. `parent`/`class`: a SUPERVISOR is limited to their own class. `school`: ADMIN only. Returns immediately (202); the worker sends asynchronously.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/SendMessageRequest" },
+              "examples": {
+                "parent": { "summary": "To one parent", "value": { "target": "parent", "studentId": 10, "message": "Bonjour, merci de passer à l'école." } },
+                "class": { "summary": "To a whole class", "value": { "target": "class", "classId": 1, "message": "Réunion de classe demain à 9h." } },
+                "school": { "summary": "To the whole school (admin)", "value": { "target": "school", "message": "L'école sera fermée vendredi." } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Queued for delivery",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "queued": { "type": "integer", "example": 25 } } } } },
+                "example": { "success": true, "data": { "queued": 25 } }
+              }
+            }
+          },
+          "403": { "$ref": "#/components/responses/Error", "description": "Not your class, or school send by a non-admin" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Student or class not found" },
+          "400": { "$ref": "#/components/responses/Error", "description": "No active recipients" }
+        }
+      }
+    },
+    "/api/messages/history": {
+      "get": {
+        "tags": ["Messages"],
+        "summary": "List sent/queued messages (ADMIN: all, SUPERVISOR: own class)",
+        "parameters": [
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/MessageStatus" } },
+          { "name": "type", "in": "query", "schema": { "$ref": "#/components/schemas/MessageType" } },
+          { "name": "studentId", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Message history",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/MessageHistoryRow" } } } },
+                "example": { "success": true, "data": [{ "id": 500, "studentId": 10, "studentName": "Ahmed Touré", "parentWhatsapp": "+2250700000000", "messageText": "Bonjour, votre enfant Ahmed Touré a été marqué(e) absent(e)...", "type": "ABSENCE", "status": "SENT", "sentAt": "2026-06-25T08:05:00.000Z", "createdAt": "2026-06-25T08:00:00.000Z" }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/messages/whatsapp/status": {
+      "get": {
+        "tags": ["Messages"],
+        "summary": "WhatsApp connection status + QR to scan when linking (ADMIN)",
+        "description": "When `state` is `QR`, render the `qr` data-URL and scan it from the linked phone. When `CONNECTED`, `qr` is null.",
+        "responses": {
+          "200": {
+            "description": "Connection status",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/WhatsAppStatus" } } },
+                "examples": {
+                  "qr": { "value": { "success": true, "data": { "state": "QR", "qr": "data:image/png;base64,iVBORw0KGgo..." } } },
+                  "connected": { "value": { "success": true, "data": { "state": "CONNECTED", "qr": null } } }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT" }
+    },
+    "parameters": {
+      "IdPath": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 }, "example": 1 },
+      "OperatorIdPath": { "name": "operatorId", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 }, "example": 5 }
+    },
+    "responses": {
+      "Error": {
+        "description": "Error",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": { "success": false, "error": { "message": "Class not found", "code": "CLASS_NOT_FOUND" } }
+          }
+        }
+      },
+      "ValidationError": {
+        "description": "Validation failed (Zod)",
+        "content": {
+          "application/json": {
+            "schema": { "$ref": "#/components/schemas/ErrorEnvelope" },
+            "example": { "success": false, "error": { "message": "Validation failed", "code": "VALIDATION_ERROR", "fields": { "email": ["A valid email is required"] } } }
+          }
+        }
+      },
+      "Message": {
+        "description": "Simple message",
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "message": { "type": "string" } } } } },
+            "example": { "success": true, "data": { "message": "Done" } }
+          }
+        }
+      },
+      "AuthResult": {
+        "description": "User + token pair",
+        "content": {
+          "application/json": {
+            "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AuthResult" } } },
+            "example": { "success": true, "data": { "user": { "id": 1, "name": "Directeur ZASS", "email": "admin@kalande.net", "role": "ADMIN" }, "accessToken": "eyJ...", "refreshToken": "eyJ..." } }
+          }
+        }
+      }
+    },
+    "schemas": {
+      "Role": { "type": "string", "enum": ["ADMIN", "SUPERVISOR", "OPERATOR"] },
+      "StudentStatus": { "type": "string", "enum": ["ACTIVE", "TRANSFERRED", "EXPELLED", "GRADUATED", "DROPOUT"] },
+      "AttendancePeriod": { "type": "string", "enum": ["MATIN", "MIDI", "SOIR"] },
+      "AttendanceStatus": { "type": "string", "enum": ["PRESENT", "ABSENT"] },
+      "MessageType": { "type": "string", "enum": ["ABSENCE", "PERSONNALISE", "GROUPE_CLASSE", "GROUPE_ECOLE"] },
+      "MessageStatus": { "type": "string", "enum": ["PENDING", "SENT", "FAILED_INVALID_NUMBER", "FAILED_SESSION_CLOSED"] },
+      "WhatsAppState": { "type": "string", "enum": ["DISABLED", "INITIALIZING", "QR", "CONNECTED", "DISCONNECTED"] },
+      "ErrorEnvelope": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": false },
+          "error": {
+            "type": "object",
+            "properties": {
+              "message": { "type": "string" },
+              "code": { "type": "string" },
+              "fields": { "type": "object", "additionalProperties": { "type": "array", "items": { "type": "string" } }, "nullable": true }
+            },
+            "required": ["message", "code"]
+          }
+        },
+        "required": ["success", "error"]
+      },
+      "Password": {
+        "type": "string",
+        "description": "Min 8 chars, at least one uppercase, one digit, one special character.",
+        "example": "Motdepasse#1"
+      },
+      "RegisterRequest": {
+        "type": "object",
+        "required": ["name", "email", "password"],
+        "properties": {
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string", "minLength": 8, "description": "Min 8 characters." }
+        }
+      },
+      "LoginRequest": {
+        "type": "object",
+        "required": ["email", "password"],
+        "properties": {
+          "email": { "type": "string", "format": "email" },
+          "password": { "type": "string" }
+        }
+      },
+      "RefreshRequest": {
+        "type": "object",
+        "required": ["refreshToken"],
+        "properties": { "refreshToken": { "type": "string" } }
+      },
+      "ForgotPasswordRequest": {
+        "type": "object",
+        "required": ["email"],
+        "properties": { "email": { "type": "string", "format": "email" } }
+      },
+      "ResetPasswordRequest": {
+        "type": "object",
+        "required": ["token", "newPassword"],
+        "properties": {
+          "token": { "type": "string" },
+          "newPassword": { "$ref": "#/components/schemas/Password" }
+        }
+      },
+      "ChangePasswordRequest": {
+        "type": "object",
+        "required": ["currentPassword", "newPassword"],
+        "properties": {
+          "currentPassword": { "type": "string" },
+          "newPassword": { "$ref": "#/components/schemas/Password" }
+        }
+      },
+      "CreateUserRequest": {
+        "type": "object",
+        "required": ["name", "email", "role"],
+        "properties": {
+          "name": { "type": "string" },
+          "email": { "type": "string", "format": "email" },
+          "role": { "type": "string", "enum": ["SUPERVISOR", "OPERATOR"], "description": "ADMIN is not allowed here." }
+        }
+      },
+      "CreateClassRequest": {
+        "type": "object",
+        "required": ["name", "supervisorId"],
+        "properties": {
+          "name": { "type": "string" },
+          "supervisorId": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "AssignClassRequest": {
+        "type": "object",
+        "required": ["classId"],
+        "properties": { "classId": { "type": "integer", "minimum": 1 } }
+      },
+      "CreateStudentRequest": {
+        "type": "object",
+        "required": ["classId", "firstName", "lastName", "birthDate", "parentName", "parentWhatsapp"],
+        "properties": {
+          "classId": { "type": "integer", "minimum": 1 },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date", "example": "2015-05-01" },
+          "parentName": { "type": "string" },
+          "parentWhatsapp": { "type": "string", "description": "International format.", "example": "+2250700000000" }
+        }
+      },
+      "UpdateStudentRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date" },
+          "parentName": { "type": "string" },
+          "parentWhatsapp": { "type": "string", "example": "+2250700000000" },
+          "status": { "$ref": "#/components/schemas/StudentStatus" }
+        }
+      },
+      "SubmitAttendanceRequest": {
+        "type": "object",
+        "required": ["period", "subject"],
+        "properties": {
+          "period": { "$ref": "#/components/schemas/AttendancePeriod" },
+          "subject": { "type": "string", "example": "Coran" },
+          "date": { "type": "string", "format": "date", "description": "Defaults to today.", "example": "2026-06-25" },
+          "absents": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "default": [], "example": [10, 27] }
+        }
+      },
+      "SendMessageRequest": {
+        "oneOf": [
+          {
+            "type": "object",
+            "required": ["target", "studentId", "message"],
+            "properties": {
+              "target": { "type": "string", "enum": ["parent"] },
+              "studentId": { "type": "integer", "minimum": 1 },
+              "message": { "type": "string", "maxLength": 4000 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["target", "classId", "message"],
+            "properties": {
+              "target": { "type": "string", "enum": ["class"] },
+              "classId": { "type": "integer", "minimum": 1 },
+              "message": { "type": "string", "maxLength": 4000 }
+            }
+          },
+          {
+            "type": "object",
+            "required": ["target", "message"],
+            "properties": {
+              "target": { "type": "string", "enum": ["school"] },
+              "message": { "type": "string", "maxLength": 4000 }
+            }
+          }
+        ],
+        "discriminator": { "propertyName": "target" }
+      },
+      "AuthUser": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "role": { "$ref": "#/components/schemas/Role" }
+        }
+      },
+      "AuthResult": {
+        "type": "object",
+        "properties": {
+          "user": { "$ref": "#/components/schemas/AuthUser" },
+          "accessToken": { "type": "string" },
+          "refreshToken": { "type": "string" }
+        }
+      },
+      "EnvelopeTokenPair": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean" },
+          "data": {
+            "type": "object",
+            "properties": {
+              "accessToken": { "type": "string" },
+              "refreshToken": { "type": "string" }
+            }
+          }
+        }
+      },
+      "PublicUser": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string" },
+          "role": { "$ref": "#/components/schemas/Role" },
+          "classId": { "type": "integer", "nullable": true }
+        }
+      },
+      "ClassWithSupervisor": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "supervisor": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "id": { "type": "integer" },
+              "name": { "type": "string" },
+              "email": { "type": "string" }
+            }
+          }
+        }
+      },
+      "AvailableOperator": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "email": { "type": "string" }
+        }
+      },
+      "AuthorizedClass": {
+        "type": "object",
+        "properties": {
+          "classId": { "type": "integer" },
+          "className": { "type": "string" },
+          "assignedAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Student": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "classId": { "type": "integer" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "birthDate": { "type": "string", "format": "date-time" },
+          "parentName": { "type": "string" },
+          "parentWhatsapp": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/StudentStatus" },
+          "createdById": { "type": "integer", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CallListStudent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "firstName": { "type": "string" },
+          "lastName": { "type": "string" },
+          "parentName": { "type": "string" },
+          "parentWhatsapp": { "type": "string" }
+        }
+      },
+      "AttendanceSummary": {
+        "type": "object",
+        "properties": {
+          "classId": { "type": "integer" },
+          "className": { "type": "string" },
+          "period": { "$ref": "#/components/schemas/AttendancePeriod" },
+          "subject": { "type": "string" },
+          "date": { "type": "string", "format": "date-time" },
+          "total": { "type": "integer" },
+          "presentCount": { "type": "integer" },
+          "absentCount": { "type": "integer" },
+          "absentStudentIds": { "type": "array", "items": { "type": "integer" } }
+        }
+      },
+      "AttendanceHistoryRow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "studentId": { "type": "integer" },
+          "studentName": { "type": "string" },
+          "status": { "$ref": "#/components/schemas/AttendanceStatus" },
+          "period": { "$ref": "#/components/schemas/AttendancePeriod" },
+          "subject": { "type": "string" },
+          "date": { "type": "string", "format": "date-time" }
+        }
+      },
+      "AdminDashboard": {
+        "type": "object",
+        "properties": {
+          "classes": { "type": "integer" },
+          "students": {
+            "type": "object",
+            "properties": { "active": { "type": "integer" }, "total": { "type": "integer" } }
+          },
+          "supervisors": { "type": "integer" },
+          "operators": { "type": "integer" },
+          "today": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string", "format": "date-time" },
+              "present": { "type": "integer" },
+              "absent": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "SupervisorDashboard": {
+        "type": "object",
+        "properties": {
+          "class": {
+            "type": "object",
+            "properties": { "id": { "type": "integer" }, "name": { "type": "string" } }
+          },
+          "activeStudents": { "type": "integer" },
+          "today": {
+            "type": "object",
+            "properties": {
+              "date": { "type": "string", "format": "date-time" },
+              "present": { "type": "integer" },
+              "absent": { "type": "integer" },
+              "submitted": { "type": "boolean" },
+              "sessions": { "type": "integer" }
+            }
+          }
+        }
+      },
+      "MessageHistoryRow": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "studentId": { "type": "integer", "nullable": true },
+          "studentName": { "type": "string", "nullable": true },
+          "parentWhatsapp": { "type": "string" },
+          "messageText": { "type": "string" },
+          "type": { "$ref": "#/components/schemas/MessageType" },
+          "status": { "$ref": "#/components/schemas/MessageStatus" },
+          "sentAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "WhatsAppStatus": {
+        "type": "object",
+        "properties": {
+          "state": { "$ref": "#/components/schemas/WhatsAppState" },
+          "qr": { "type": "string", "nullable": true, "description": "data:image/png;base64,... when state is QR, else null" }
+        }
+      }
+    }
+  }
+}

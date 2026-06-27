@@ -11,6 +11,7 @@ import operatorClassRoutes from "./routes/operator-class.route";
 import attendanceRoutes from "./routes/attendance.route";
 import dashboardRoutes from "./routes/dashboard.route";
 import messageRoutes from "./routes/message.route";
+import docsRoutes from "./routes/docs.route";
 
 const app = express();
 
@@ -45,13 +46,16 @@ apiRouter.use("/dashboard", dashboardRoutes);
 apiRouter.use("/messages", messageRoutes);
 app.use("/api", apiRouter);
 
-// 6. 404 for anything unmatched — forwarded to the error handler so the
+// 6. API documentation (Swagger UI at /docs, raw spec at /docs/swagger.json).
+app.use("/docs", docsRoutes);
+
+// 7. 404 for anything unmatched — forwarded to the error handler so the
 //    response keeps the standard error shape.
 app.use((_req, _res, next) => {
   next(new AppError(404, "NOT_FOUND", "Route not found"));
 });
 
-// 7. Centralized error handler — ALWAYS last.
+// 8. Centralized error handler — ALWAYS last.
 app.use(errorHandler);
 
 export default app;
