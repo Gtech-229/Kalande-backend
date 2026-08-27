@@ -1,6 +1,7 @@
-import { Prisma, Role, StudentStatus } from "@prisma/client";
+import { Prisma, Role, StudentStatus, Gender } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
+import { paginate, pageSkip, type Paginated } from "../utils/pagination";
 import type {
   CreateStudentInput,
   UpdateStudentInput,
@@ -31,6 +32,7 @@ type PublicStudent = {
   classId: number;
   firstName: string;
   lastName: string;
+  gender: Gender;
   birthDate: Date;
   parentName: string;
   parentWhatsapp: string;
@@ -46,6 +48,7 @@ function toPublicStudent(student: PublicStudent): PublicStudent {
     classId: student.classId,
     firstName: student.firstName,
     lastName: student.lastName,
+    gender: student.gender,
     birthDate: student.birthDate,
     parentName: student.parentName,
     parentWhatsapp: student.parentWhatsapp,
@@ -104,6 +107,7 @@ export async function createStudent(
       classId: input.classId,
       firstName: input.firstName,
       lastName: input.lastName,
+      gender: input.gender,
       birthDate: input.birthDate,
       parentName: input.parentName,
       parentWhatsapp: input.parentWhatsapp,
@@ -120,7 +124,7 @@ export async function createStudent(
  */
 export async function listStudents(
   filter: ListStudentsQuery
-): Promise<PublicStudent[]> {
+): Promise<Paginated<PublicStudent>> {
   const where: Prisma.StudentWhereInput = { deletedAt: null };
   if (filter.classId !== undefined) {
     where.classId = filter.classId;
@@ -129,12 +133,22 @@ export async function listStudents(
     where.status = filter.status;
   }
 
-  const students = await db.student.findMany({
-    where,
-    orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
-  });
+  const [students, total] = await Promise.all([
+    db.student.findMany({
+      where,
+      orderBy: [{ lastName: "asc" }, { firstName: "asc" }],
+      skip: pageSkip(filter.page, filter.limit),
+      take: filter.limit,
+    }),
+    db.student.count({ where }),
+  ]);
 
-  return students.map(toPublicStudent);
+  return paginate(
+    students.map(toPublicStudent),
+    total,
+    filter.page,
+    filter.limit
+  );
 }
 
 /**
@@ -162,4 +176,24 @@ export async function updateStudent(
   });
 
   return toPublicStudent(updated);
+}
+
+/**
+ * Soft-delete a student (set deletedAt — never hard delete, CLAUDE.md). ADMIN
+ * only (enforced by the route). Use this for a record entered in error; for the
+ * normal academic lifecycle (transfer, expulsion, …) change `status` instead.
+ * Fails if the student does not exist (or is already deleted).
+ */
+export async function deleteStudent(id: number): Promise<void> {
+  const student = await db.student.findFirst({
+    where: { id, deletedAt: null },
+  });
+  if (!student) {
+    throw new AppError(404, "STUDENT_NOT_FOUND", "Student not found");
+  }
+
+  await db.student.update({
+    where: { id },
+    data: { deletedAt: new Date() },
+  });
 }

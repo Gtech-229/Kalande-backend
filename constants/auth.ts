@@ -15,3 +15,9 @@ export const SALT_ROUNDS = 12;
  * and pick a new password. One hour.
  */
 export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
+
+/**
+ * How long a PIN-login challenge (nonce) stays valid. Short on purpose: the
+ * device requests it and signs it back within seconds. Single-use. Two minutes.
+ */
+export const PIN_CHALLENGE_TTL_MS = 2 * 60 * 1000;

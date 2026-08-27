@@ -33,6 +33,7 @@ type PublicUser = {
   name: string;
   email: string;
   role: Role;
+  mustChangePassword: boolean;
 };
 
 /** Returned by register/login. */
@@ -43,7 +44,7 @@ type AuthResult = {
 };
 
 /** Returned by refresh (rotation issues a fresh pair). */
-type TokenPair = {
+export type TokenPair = {
   accessToken: string;
   refreshToken: string;
 };
@@ -52,13 +53,20 @@ type TokenPair = {
 type DbClient = Prisma.TransactionClient | typeof db;
 
 /** Strip a User row down to the safe public shape. */
-function toPublicUser(user: {
+export function toPublicUser(user: {
   id: number;
   name: string;
   email: string;
   role: Role;
+  mustChangePassword: boolean;
 }): PublicUser {
-  return { id: user.id, name: user.name, email: user.email, role: user.role };
+  return {
+    id: user.id,
+    name: user.name,
+    email: user.email,
+    role: user.role,
+    mustChangePassword: user.mustChangePassword,
+  };
 }
 
 /**
@@ -80,6 +88,26 @@ async function issueRefreshToken(
   });
 
   return refreshToken;
+}
+
+/**
+ * Issue a fresh access + refresh token pair for a user and persist the refresh
+ * token. Shared by password login and PIN login so both produce identical
+ * sessions.
+ */
+export async function issueTokensForUser(user: {
+  id: number;
+  email: string;
+  role: Role;
+}): Promise<TokenPair> {
+  const payload: JwtPayload = {
+    userId: user.id,
+    email: user.email,
+    role: user.role,
+  };
+  const accessToken = signAccessToken(payload);
+  const refreshToken = await issueRefreshToken(db, payload);
+  return { accessToken, refreshToken };
 }
 
 /**
@@ -276,7 +304,7 @@ export async function resetPassword(input: ResetPasswordInput): Promise<void> {
   await db.$transaction([
     db.user.update({
       where: { id: stored.userId },
-      data: { password },
+      data: { password, mustChangePassword: false },
     }),
     db.passwordResetToken.update({
       where: { id: stored.id },
@@ -316,7 +344,10 @@ export async function changePassword(
 
   // Two tables (user + refresh tokens) -> single transaction.
   await db.$transaction([
-    db.user.update({ where: { id: user.id }, data: { password } }),
+    db.user.update({
+      where: { id: user.id },
+      data: { password, mustChangePassword: false },
+    }),
     db.token.deleteMany({ where: { userId: user.id } }),
   ]);
 }

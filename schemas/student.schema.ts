@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { StudentStatus } from "@prisma/client";
+import { StudentStatus, Gender } from "@prisma/client";
+import { paginationQuerySchema } from "./pagination.schema";
 
 /**
  * Student request schemas. One file per domain (CLAUDE.md).
@@ -24,6 +25,7 @@ export const createStudentSchema = z.object({
   classId: z.coerce.number().int().positive("A valid class id is required"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
+  gender: z.nativeEnum(Gender),
   birthDate:  z.coerce.date(),
   parentName: z.string().min(1, "Parent name is required"),
   parentWhatsapp: whatsappSchema,
@@ -38,6 +40,7 @@ export const updateStudentSchema = z
   .object({
     firstName: z.string().min(1, "First name cannot be empty").optional(),
     lastName: z.string().min(1, "Last name cannot be empty").optional(),
+    gender: z.nativeEnum(Gender).optional(),
     birthDate: z.coerce.date().optional(),
     parentName: z.string().min(1, "Parent name cannot be empty").optional(),
     parentWhatsapp: whatsappSchema.optional(),
@@ -55,8 +58,10 @@ export const studentIdParamSchema = z.object({
 export type StudentIdParam = z.infer<typeof studentIdParamSchema>;
 
 /** GET /students?classId=&status= — optional list filters. */
-export const listStudentsQuerySchema = z.object({
-  classId: z.coerce.number().int().positive().optional(),
-  status: z.nativeEnum(StudentStatus).optional(),
-});
+export const listStudentsQuerySchema = z
+  .object({
+    classId: z.coerce.number().int().positive().optional(),
+    status: z.nativeEnum(StudentStatus).optional(),
+  })
+  .merge(paginationQuerySchema);
 export type ListStudentsQuery = z.infer<typeof listStudentsQuerySchema>;

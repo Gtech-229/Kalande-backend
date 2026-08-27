@@ -4,6 +4,7 @@ import {
   MessageType,
   MessageStatus,
   StudentStatus,
+  Subject,
 } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
@@ -11,6 +12,7 @@ import { messageProvider } from "../lib/message-provider";
 import { getWhatsAppStatus, resetWhatsAppSession } from "../config/whatsapp";
 import { sleep } from "../utils/sleep";
 import { formatDateFr } from "../utils/date";
+import { paginate, pageSkip, type Paginated } from "../utils/pagination";
 import { getClassForSupervisor } from "./class.service";
 import {
   MESSAGE_BATCH_SIZE,
@@ -172,16 +174,22 @@ export async function sendMessage(
   return { queued: recipients.length };
 }
 
+/** Parent-facing French label for each subject. */
+const SUBJECT_LABELS: Record<Subject, string> = {
+  FRANCAIS: "Français",
+  ARABE: "Arabe",
+};
+
 /** Build the French parent-facing absence alert text. */
 function buildAbsenceMessage(
   firstName: string,
   lastName: string,
-  subject: string,
+  subject: Subject,
   date: Date
 ): string {
   return (
     `Bonjour, votre enfant ${firstName} ${lastName} a été marqué(e) absent(e) ` +
-    `au cours de ${subject} le ${formatDateFr(date)}. ` +
+    `au cours de ${SUBJECT_LABELS[subject]} le ${formatDateFr(date)}. ` +
     `Merci de contacter l'école pour toute information.`
   );
 }
@@ -192,7 +200,7 @@ function buildAbsenceMessage(
  */
 export async function queueAbsenceAlerts(params: {
   students: AbsenceAlertStudent[];
-  subject: string;
+  subject: Subject;
   date: Date;
   sentById: number;
 }): Promise<void> {
@@ -267,7 +275,7 @@ export async function deliverNextBatch(): Promise<number> {
 export async function getHistory(
   filter: MessageHistoryQuery,
   actor: Actor
-): Promise<MessageHistoryRow[]> {
+): Promise<Paginated<MessageHistoryRow>> {
   const where: Prisma.MessageHistoryWhereInput = { deletedAt: null };
   if (filter.status) {
     where.status = filter.status;
@@ -283,13 +291,18 @@ export async function getHistory(
     where.student = { classId: own.id };
   }
 
-  const records = await db.messageHistory.findMany({
-    where,
-    orderBy: { createdAt: "desc" },
-    include: { student: { select: { firstName: true, lastName: true } } },
-  });
+  const [records, total] = await Promise.all([
+    db.messageHistory.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      include: { student: { select: { firstName: true, lastName: true } } },
+      skip: pageSkip(filter.page, filter.limit),
+      take: filter.limit,
+    }),
+    db.messageHistory.count({ where }),
+  ]);
 
-  return records.map((record) => ({
+  const rows = records.map((record) => ({
     id: record.id,
     studentId: record.studentId,
     studentName: record.student
@@ -302,6 +315,8 @@ export async function getHistory(
     sentAt: record.sentAt,
     createdAt: record.createdAt,
   }));
+
+  return paginate(rows, total, filter.page, filter.limit);
 }
 
 /**

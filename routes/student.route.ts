@@ -40,4 +40,12 @@ router.put(
   studentController.updateStudent
 );
 
+// Soft-delete is ADMIN-only — narrows the router-level ADMIN+OPERATOR.
+router.delete(
+  "/:id",
+  authorize(Role.ADMIN),
+  validate(studentIdParamSchema, "params"),
+  studentController.deleteStudent
+);
+
 export default router;

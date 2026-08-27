@@ -2,6 +2,7 @@ import { Router } from "express";
 import { validate } from "../middlewares/validate";
 import { authenticate } from "../middlewares/auth";
 import * as authController from "../controllers/auth.controller";
+import * as deviceController from "../controllers/device.controller";
 import {
   registerSchema,
   loginSchema,
@@ -11,6 +12,12 @@ import {
   resetPasswordSchema,
   changePasswordSchema,
 } from "../schemas/auth.schema";
+import {
+  enrollDeviceSchema,
+  challengeSchema,
+  pinLoginSchema,
+  deviceIdParamSchema,
+} from "../schemas/device.schema";
 
 /**
  * Auth routes — wiring only: path + validate() + controller (CLAUDE.md).
@@ -41,6 +48,33 @@ router.post(
   authenticate,
   validate(changePasswordSchema),
   authController.changePassword
+);
+
+// --- Device / PIN authentication ---
+// Enroll/list/revoke require a logged-in session (password login first).
+router.post(
+  "/devices",
+  authenticate,
+  validate(enrollDeviceSchema),
+  deviceController.enrollDevice
+);
+router.get("/devices", authenticate, deviceController.listDevices);
+router.delete(
+  "/devices/:id",
+  authenticate,
+  validate(deviceIdParamSchema, "params"),
+  deviceController.revokeDevice
+);
+// Public: identity is proven by the signature, not a session.
+router.post(
+  "/pin/challenge",
+  validate(challengeSchema),
+  deviceController.createChallenge
+);
+router.post(
+  "/pin/login",
+  validate(pinLoginSchema),
+  deviceController.pinLogin
 );
 
 export default router;

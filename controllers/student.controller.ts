@@ -61,3 +61,15 @@ export const updateStudent = asyncHandler(async (req: Request, res: Response) =>
   );
   res.status(200).json({ success: true, data });
 });
+
+/**
+ * @description Soft-delete a student (record entered in error)
+ * @route   DELETE /api/students/:id
+ * @access  ADMIN
+ * **/
+
+export const deleteStudent = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as unknown as StudentIdParam;
+  await studentService.deleteStudent(id);
+  res.status(200).json({ success: true, data: { message: "Student deleted" } });
+});

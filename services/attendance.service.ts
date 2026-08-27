@@ -3,12 +3,14 @@ import {
   AttendanceStatus,
   AttendancePeriod,
   StudentStatus,
+  Subject,
 } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
 import { toDateOnly } from "../utils/date";
 import { getClassForSupervisor } from "./class.service";
 import { queueAbsenceAlerts } from "./message.service";
+import { paginate, pageSkip, type Paginated } from "../utils/pagination";
 import type {
   SubmitAttendanceInput,
   AttendanceHistoryQuery,
@@ -43,7 +45,7 @@ type AttendanceSummary = {
   classId: number;
   className: string;
   period: AttendancePeriod;
-  subject: string;
+  subject: Subject;
   date: Date;
   total: number;
   presentCount: number;
@@ -58,7 +60,7 @@ type AttendanceHistoryRow = {
   studentName: string;
   status: AttendanceStatus;
   period: AttendancePeriod;
-  subject: string;
+  subject: Subject;
   date: Date;
 };
 
@@ -220,7 +222,7 @@ export async function submitAttendance(
 export async function getAttendanceHistory(
   filter: AttendanceHistoryQuery,
   actor: Actor
-): Promise<AttendanceHistoryRow[]> {
+): Promise<Paginated<AttendanceHistoryRow>> {
   const klass = await getClassForSupervisor(actor.userId);
 
   const where: Prisma.AttendanceWhereInput = {
@@ -237,15 +239,20 @@ export async function getAttendanceHistory(
     where.subject = filter.subject;
   }
 
-  const records = await db.attendance.findMany({
-    where,
-    orderBy: [{ date: "desc" }, { subject: "asc" }],
-    include: {
-      student: { select: { firstName: true, lastName: true } },
-    },
-  });
+  const [records, total] = await Promise.all([
+    db.attendance.findMany({
+      where,
+      orderBy: [{ date: "desc" }, { subject: "asc" }],
+      include: {
+        student: { select: { firstName: true, lastName: true } },
+      },
+      skip: pageSkip(filter.page, filter.limit),
+      take: filter.limit,
+    }),
+    db.attendance.count({ where }),
+  ]);
 
-  return records.map((record) => ({
+  const rows = records.map((record) => ({
     id: record.id,
     studentId: record.studentId,
     studentName: `${record.student.firstName} ${record.student.lastName}`,
@@ -254,4 +261,6 @@ export async function getAttendanceHistory(
     subject: record.subject,
     date: record.date,
   }));
+
+  return paginate(rows, total, filter.page, filter.limit);
 }

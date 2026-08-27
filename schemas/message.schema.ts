@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { MessageStatus, MessageType } from "@prisma/client";
+import { paginationQuerySchema } from "./pagination.schema";
 
 /**
  * Message request schemas. One file per domain (CLAUDE.md).
@@ -40,9 +41,11 @@ export const sendMessageSchema = z.discriminatedUnion("target", [
 export type SendMessageInput = z.infer<typeof sendMessageSchema>;
 
 /** GET /messages/history?status=&type=&studentId= — optional filters. */
-export const messageHistoryQuerySchema = z.object({
-  status: z.nativeEnum(MessageStatus).optional(),
-  type: z.nativeEnum(MessageType).optional(),
-  studentId: z.coerce.number().int().positive().optional(),
-});
+export const messageHistoryQuerySchema = z
+  .object({
+    status: z.nativeEnum(MessageStatus).optional(),
+    type: z.nativeEnum(MessageType).optional(),
+    studentId: z.coerce.number().int().positive().optional(),
+  })
+  .merge(paginationQuerySchema);
 export type MessageHistoryQuery = z.infer<typeof messageHistoryQuerySchema>;

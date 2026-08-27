@@ -35,6 +35,11 @@ model User {
   password String // bcrypt hash — never store plaintext
   role     Role
 
+  // True while the user is still on the admin-generated temporary password.
+  // Set false once they set their own (reset-password / change-password). The
+  // frontend uses it to force the "set password → set PIN" onboarding.
+  mustChangePassword Boolean @default(false)
+
   // Home class this user belongs to (SUPERVISOR/OPERATOR). Null for ADMIN.
   // If the class is deleted, the link is cleared (SetNull) — the user remains.
   classId Int?
@@ -49,6 +54,9 @@ model User {
 
   // Outstanding password reset tokens (forgot-password flow).
   passwordResetTokens PasswordResetToken[]
+
+  // Enrolled devices for PIN/keypair login (one keypair per device).
+  devices Device[]
 
   // Audit trail of transactional emails sent to this user.
   emailLogs EmailLog[]
@@ -108,6 +116,12 @@ enum StudentStatus {
   DROPOUT
 }
 
+// Student gender.
+enum Gender {
+  MALE
+  FEMALE
+}
+
 model Student {
   id        Int       @id @default(autoincrement())
   createdAt DateTime  @default(now())
@@ -118,6 +132,7 @@ model Student {
 
   firstName      String
   lastName       String
+  gender         Gender
   birthDate      DateTime
   parentName     String
   parentWhatsapp String // international format, e.g. +2250700000000
@@ -205,6 +220,34 @@ model PasswordResetToken {
   @@index([userId])
 }
 
+// A device enrolled for PIN/keypair login. The device holds the private key
+// (unlocked by the local PIN); we store only its PUBLIC key and verify signed
+// challenges against it. A user may enroll several devices.
+model Device {
+  id        Int      @id @default(autoincrement())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  name      String // user-facing label, e.g. "Samsung A10"
+  platform  String? // "android" | "ios" | ...
+  publicKey String  @unique // raw 32-byte Ed25519 public key, base64
+
+  // Single-use login challenge (nonce) + its expiry. One active challenge per
+  // device: requesting a new one overwrites the old, and it is cleared on use.
+  challenge          String?
+  challengeExpiresAt DateTime?
+
+  lastUsedAt DateTime?
+  // Soft revoke (lost/stolen device). Revoked devices cannot log in.
+  revokedAt  DateTime?
+
+  // Index on every foreign key field (CLAUDE.md).
+  @@index([userId])
+}
+
 // Which transactional email was sent.
 enum EmailType {
   WELCOME // new account credentials
@@ -253,6 +296,12 @@ enum AttendancePeriod {
   SOIR
 }
 
+// The subject a call session covers.
+enum Subject {
+  FRANCAIS
+  ARABE
+}
+
 // One row per student per session (period + subject + date). The whole class's
 // call is recorded at once via POST /attendance/submit (APP_CONTEXT.md).
 model Attendance {
@@ -276,7 +325,7 @@ model Attendance {
 
   status  AttendanceStatus
   period  AttendancePeriod
-  subject String // e.g. Coran, Arabe, Français, Maths
+  subject Subject
   date    DateTime @db.Date
 
   // ANTI-DOUBLE-SUBMIT: one record per student, period, subject and date.

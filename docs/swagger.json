@@ -194,21 +194,124 @@
         }
       }
     },
+    "/api/auth/devices": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Enroll this device's public key for PIN login (authenticated)",
+        "description": "Call once, right after a password login, during PIN setup. The client generates an Ed25519 keypair, keeps the private key locally (encrypted by the PIN), and registers the raw 32-byte public key (base64).",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/EnrollDeviceRequest" },
+              "example": { "name": "Samsung A10", "platform": "android", "publicKey": "3q2+7wAAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=" }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Enrolled device",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/Device" } } } } }
+          },
+          "409": { "$ref": "#/components/responses/Error", "description": "This device key is already registered" },
+          "401": { "$ref": "#/components/responses/Error" }
+        }
+      },
+      "get": {
+        "tags": ["Auth"],
+        "summary": "List the authenticated user's enrolled devices",
+        "responses": {
+          "200": {
+            "description": "Devices (revoked ones are flagged)",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/Device" } } } },
+                "example": { "success": true, "data": [{ "id": 1, "name": "Samsung A10", "platform": "android", "lastUsedAt": "2026-06-27T18:00:00.000Z", "createdAt": "2026-06-27T17:00:00.000Z", "revoked": false }] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/devices/{id}": {
+      "delete": {
+        "tags": ["Auth"],
+        "summary": "Revoke one of the user's devices (authenticated)",
+        "description": "The device's key can no longer log in, making its local PIN worthless. Use for a lost/stolen phone.",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Device revoked" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Device not found" }
+        }
+      }
+    },
+    "/api/auth/pin/challenge": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Get a challenge (nonce) for a device to sign",
+        "description": "Step 1 of PIN login. Returns an opaque `challenge` string; the device signs its UTF-8 bytes with the Ed25519 private key (unlocked by the PIN). Single-use, short-lived.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ChallengeRequest" },
+              "example": { "deviceId": 1 }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Challenge to sign",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "challenge": { "type": "string" }, "expiresAt": { "type": "string", "format": "date-time" } } } } },
+                "example": { "success": true, "data": { "challenge": "k7f2...==", "expiresAt": "2026-06-27T18:02:00.000Z" } }
+              }
+            }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Device not found" }
+        }
+      }
+    },
+    "/api/auth/pin/login": {
+      "post": {
+        "tags": ["Auth"],
+        "summary": "Log in by signing the challenge (no password)",
+        "description": "Step 2 of PIN login. Send the `challenge` from step 1 and its base64 Ed25519 `signature`. On success returns the same token pair as password login. Every failure is a generic 401.",
+        "security": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/PinLoginRequest" },
+              "example": { "deviceId": 1, "challenge": "k7f2...==", "signature": "MEUCIQ...==" }
+            }
+          }
+        },
+        "responses": {
+          "200": { "$ref": "#/components/responses/AuthResult" },
+          "401": { "$ref": "#/components/responses/Error", "description": "Authentication failed" }
+        }
+      }
+    },
     "/api/users": {
       "get": {
         "tags": ["Users"],
         "summary": "List users (ADMIN)",
         "parameters": [
           { "name": "role", "in": "query", "schema": { "$ref": "#/components/schemas/Role" }, "description": "Filter by role" },
-          { "name": "assigned", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "true = has a class, false = available (no class). Used to list assignable supervisors." }
+          { "name": "assigned", "in": "query", "schema": { "type": "string", "enum": ["true", "false"] }, "description": "true = has a class, false = available (no class). Used to list assignable supervisors." },
+          { "$ref": "#/components/parameters/PageParam" },
+          { "$ref": "#/components/parameters/LimitParam" }
         ],
         "responses": {
           "200": {
-            "description": "Users matching the filters",
+            "description": "Paginated users matching the filters",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/PublicUser" } } } },
-                "example": { "success": true, "data": [{ "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net", "role": "SUPERVISOR", "classId": null }] }
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/PublicUser" } }, "pagination": { "$ref": "#/components/schemas/PaginationMeta" } } } } },
+                "example": { "success": true, "data": { "items": [{ "id": 2, "name": "M. Diallo", "email": "diallo@kalande.net", "role": "SUPERVISOR", "classId": null, "mustChangePassword": true }], "pagination": { "page": 1, "limit": 20, "total": 6, "totalPages": 1, "hasNext": false, "hasPrev": false } } }
               }
             }
           },
@@ -398,15 +501,17 @@
         "summary": "List students (ADMIN, OPERATOR)",
         "parameters": [
           { "name": "classId", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
-          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/StudentStatus" } }
+          { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/StudentStatus" } },
+          { "$ref": "#/components/parameters/PageParam" },
+          { "$ref": "#/components/parameters/LimitParam" }
         ],
         "responses": {
           "200": {
-            "description": "Students",
+            "description": "Paginated students",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/Student" } } } },
-                "example": { "success": true, "data": [{ "id": 10, "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "birthDate": "2015-05-01T00:00:00.000Z", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000", "status": "ACTIVE", "createdById": 1, "createdAt": "2026-06-25T11:00:00.000Z" }] }
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/Student" } }, "pagination": { "$ref": "#/components/schemas/PaginationMeta" } } } } },
+                "example": { "success": true, "data": { "items": [{ "id": 10, "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "gender": "MALE", "birthDate": "2015-05-01T00:00:00.000Z", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000", "status": "ACTIVE", "createdById": 1, "createdAt": "2026-06-25T11:00:00.000Z" }], "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1, "hasNext": false, "hasPrev": false } } }
               }
             }
           }
@@ -421,7 +526,7 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/CreateStudentRequest" },
-              "example": { "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "birthDate": "2015-05-01", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000" }
+              "example": { "classId": 1, "firstName": "Ahmed", "lastName": "Touré", "gender": "MALE", "birthDate": "2015-05-01", "parentName": "Fatou Touré", "parentWhatsapp": "+2250700000000" }
             }
           }
         },
@@ -467,6 +572,16 @@
           "403": { "$ref": "#/components/responses/Error", "description": "Operator not authorized for this class" },
           "404": { "$ref": "#/components/responses/Error", "description": "Student not found" }
         }
+      },
+      "delete": {
+        "tags": ["Students"],
+        "summary": "Soft-delete a student (ADMIN)",
+        "description": "Marks the record deleted (for a student entered in error). For the normal academic lifecycle (transfer, expulsion, …) change `status` via PUT instead — those are kept for history.",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "responses": {
+          "200": { "$ref": "#/components/responses/Message", "description": "Student deleted" },
+          "404": { "$ref": "#/components/responses/Error", "description": "Student not found" }
+        }
       }
     },
     "/api/attendance/students": {
@@ -497,7 +612,7 @@
           "content": {
             "application/json": {
               "schema": { "$ref": "#/components/schemas/SubmitAttendanceRequest" },
-              "example": { "period": "MATIN", "subject": "Coran", "date": "2026-06-25", "absents": [10, 27] }
+              "example": { "period": "MATIN", "subject": "ARABE", "date": "2026-06-25", "absents": [10, 27] }
             }
           }
         },
@@ -507,7 +622,7 @@
             "content": {
               "application/json": {
                 "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AttendanceSummary" } } },
-                "example": { "success": true, "data": { "classId": 1, "className": "CP-A", "period": "MATIN", "subject": "Coran", "date": "2026-06-25T00:00:00.000Z", "total": 25, "presentCount": 23, "absentCount": 2, "absentStudentIds": [10, 27] } }
+                "example": { "success": true, "data": { "classId": 1, "className": "CP-A", "period": "MATIN", "subject": "ARABE", "date": "2026-06-25T00:00:00.000Z", "total": 25, "presentCount": 23, "absentCount": 2, "absentStudentIds": [10, 27] } }
               }
             }
           },
@@ -524,15 +639,17 @@
         "parameters": [
           { "name": "date", "in": "query", "schema": { "type": "string", "format": "date" }, "example": "2026-06-25" },
           { "name": "period", "in": "query", "schema": { "$ref": "#/components/schemas/AttendancePeriod" } },
-          { "name": "subject", "in": "query", "schema": { "type": "string" }, "example": "Coran" }
+          { "name": "subject", "in": "query", "schema": { "$ref": "#/components/schemas/Subject" } },
+          { "$ref": "#/components/parameters/PageParam" },
+          { "$ref": "#/components/parameters/LimitParam" }
         ],
         "responses": {
           "200": {
-            "description": "History rows",
+            "description": "Paginated history rows",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/AttendanceHistoryRow" } } } },
-                "example": { "success": true, "data": [{ "id": 100, "studentId": 10, "studentName": "Ahmed Touré", "status": "ABSENT", "period": "MATIN", "subject": "Coran", "date": "2026-06-25T00:00:00.000Z" }] }
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/AttendanceHistoryRow" } }, "pagination": { "$ref": "#/components/schemas/PaginationMeta" } } } } },
+                "example": { "success": true, "data": { "items": [{ "id": 100, "studentId": 10, "studentName": "Ahmed Touré", "status": "ABSENT", "period": "MATIN", "subject": "ARABE", "date": "2026-06-25T00:00:00.000Z" }], "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1, "hasNext": false, "hasPrev": false } } }
               }
             }
           }
@@ -615,15 +732,17 @@
         "parameters": [
           { "name": "status", "in": "query", "schema": { "$ref": "#/components/schemas/MessageStatus" } },
           { "name": "type", "in": "query", "schema": { "$ref": "#/components/schemas/MessageType" } },
-          { "name": "studentId", "in": "query", "schema": { "type": "integer", "minimum": 1 } }
+          { "name": "studentId", "in": "query", "schema": { "type": "integer", "minimum": 1 } },
+          { "$ref": "#/components/parameters/PageParam" },
+          { "$ref": "#/components/parameters/LimitParam" }
         ],
         "responses": {
           "200": {
-            "description": "Message history",
+            "description": "Paginated message history",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "array", "items": { "$ref": "#/components/schemas/MessageHistoryRow" } } } },
-                "example": { "success": true, "data": [{ "id": 500, "studentId": 10, "studentName": "Ahmed Touré", "parentWhatsapp": "+2250700000000", "messageText": "Bonjour, votre enfant Ahmed Touré a été marqué(e) absent(e)...", "type": "ABSENCE", "status": "SENT", "sentAt": "2026-06-25T08:05:00.000Z", "createdAt": "2026-06-25T08:00:00.000Z" }] }
+                "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "type": "object", "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/MessageHistoryRow" } }, "pagination": { "$ref": "#/components/schemas/PaginationMeta" } } } } },
+                "example": { "success": true, "data": { "items": [{ "id": 500, "studentId": 10, "studentName": "Ahmed Touré", "parentWhatsapp": "+2250700000000", "messageText": "Bonjour, votre enfant Ahmed Touré a été marqué(e) absent(e)...", "type": "ABSENCE", "status": "SENT", "sentAt": "2026-06-25T08:05:00.000Z", "createdAt": "2026-06-25T08:00:00.000Z" }], "pagination": { "page": 1, "limit": 20, "total": 1, "totalPages": 1, "hasNext": false, "hasPrev": false } } }
               }
             }
           }
@@ -677,7 +796,9 @@
     },
     "parameters": {
       "IdPath": { "name": "id", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 }, "example": 1 },
-      "OperatorIdPath": { "name": "operatorId", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 }, "example": 5 }
+      "OperatorIdPath": { "name": "operatorId", "in": "path", "required": true, "schema": { "type": "integer", "minimum": 1 }, "example": 5 },
+      "PageParam": { "name": "page", "in": "query", "schema": { "type": "integer", "minimum": 1, "default": 1 }, "description": "1-based page number." },
+      "LimitParam": { "name": "limit", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 100, "default": 20 }, "description": "Page size (max 100)." }
     },
     "responses": {
       "Error": {
@@ -712,15 +833,62 @@
         "content": {
           "application/json": {
             "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/AuthResult" } } },
-            "example": { "success": true, "data": { "user": { "id": 1, "name": "Directeur ZASS", "email": "admin@kalande.net", "role": "ADMIN" }, "accessToken": "eyJ...", "refreshToken": "eyJ..." } }
+            "example": { "success": true, "data": { "user": { "id": 1, "name": "Directeur ZASS", "email": "admin@kalande.net", "role": "ADMIN", "mustChangePassword": false }, "accessToken": "eyJ...", "refreshToken": "eyJ..." } }
           }
         }
       }
     },
     "schemas": {
+      "EnrollDeviceRequest": {
+        "type": "object",
+        "required": ["name", "publicKey"],
+        "properties": {
+          "name": { "type": "string", "example": "Samsung A10" },
+          "platform": { "type": "string", "example": "android" },
+          "publicKey": { "type": "string", "description": "Raw 32-byte Ed25519 public key, base64." }
+        }
+      },
+      "ChallengeRequest": {
+        "type": "object",
+        "required": ["deviceId"],
+        "properties": { "deviceId": { "type": "integer", "minimum": 1 } }
+      },
+      "PinLoginRequest": {
+        "type": "object",
+        "required": ["deviceId", "challenge", "signature"],
+        "properties": {
+          "deviceId": { "type": "integer", "minimum": 1 },
+          "challenge": { "type": "string", "description": "The challenge string from /auth/pin/challenge." },
+          "signature": { "type": "string", "description": "Raw 64-byte Ed25519 signature of the challenge's UTF-8 bytes, base64." }
+        }
+      },
+      "Device": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "integer" },
+          "name": { "type": "string" },
+          "platform": { "type": "string", "nullable": true },
+          "lastUsedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "revoked": { "type": "boolean" }
+        }
+      },
       "Role": { "type": "string", "enum": ["ADMIN", "SUPERVISOR", "OPERATOR"] },
       "StudentStatus": { "type": "string", "enum": ["ACTIVE", "TRANSFERRED", "EXPELLED", "GRADUATED", "DROPOUT"] },
+      "Gender": { "type": "string", "enum": ["MALE", "FEMALE"] },
+      "PaginationMeta": {
+        "type": "object",
+        "properties": {
+          "page": { "type": "integer" },
+          "limit": { "type": "integer" },
+          "total": { "type": "integer" },
+          "totalPages": { "type": "integer" },
+          "hasNext": { "type": "boolean" },
+          "hasPrev": { "type": "boolean" }
+        }
+      },
       "AttendancePeriod": { "type": "string", "enum": ["MATIN", "MIDI", "SOIR"] },
+      "Subject": { "type": "string", "enum": ["FRANCAIS", "ARABE"] },
       "AttendanceStatus": { "type": "string", "enum": ["PRESENT", "ABSENT"] },
       "MessageType": { "type": "string", "enum": ["ABSENCE", "PERSONNALISE", "GROUPE_CLASSE", "GROUPE_ECOLE"] },
       "MessageStatus": { "type": "string", "enum": ["PENDING", "SENT", "FAILED_INVALID_NUMBER", "FAILED_SESSION_CLOSED"] },
@@ -813,11 +981,12 @@
       },
       "CreateStudentRequest": {
         "type": "object",
-        "required": ["classId", "firstName", "lastName", "birthDate", "parentName", "parentWhatsapp"],
+        "required": ["classId", "firstName", "lastName", "gender", "birthDate", "parentName", "parentWhatsapp"],
         "properties": {
           "classId": { "type": "integer", "minimum": 1 },
           "firstName": { "type": "string" },
           "lastName": { "type": "string" },
+          "gender": { "$ref": "#/components/schemas/Gender" },
           "birthDate": { "type": "string", "format": "date", "example": "2015-05-01" },
           "parentName": { "type": "string" },
           "parentWhatsapp": { "type": "string", "description": "International format.", "example": "+2250700000000" }
@@ -829,6 +998,7 @@
         "properties": {
           "firstName": { "type": "string" },
           "lastName": { "type": "string" },
+          "gender": { "$ref": "#/components/schemas/Gender" },
           "birthDate": { "type": "string", "format": "date" },
           "parentName": { "type": "string" },
           "parentWhatsapp": { "type": "string", "example": "+2250700000000" },
@@ -840,7 +1010,7 @@
         "required": ["period", "subject"],
         "properties": {
           "period": { "$ref": "#/components/schemas/AttendancePeriod" },
-          "subject": { "type": "string", "example": "Coran" },
+          "subject": { "$ref": "#/components/schemas/Subject" },
           "date": { "type": "string", "format": "date", "description": "Defaults to today.", "example": "2026-06-25" },
           "absents": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "default": [], "example": [10, 27] }
         }
@@ -882,7 +1052,8 @@
           "id": { "type": "integer" },
           "name": { "type": "string" },
           "email": { "type": "string" },
-          "role": { "$ref": "#/components/schemas/Role" }
+          "role": { "$ref": "#/components/schemas/Role" },
+          "mustChangePassword": { "type": "boolean", "description": "true = still on the admin-generated temporary password; drive the set-password onboarding." }
         }
       },
       "AuthResult": {
@@ -913,7 +1084,8 @@
           "name": { "type": "string" },
           "email": { "type": "string" },
           "role": { "$ref": "#/components/schemas/Role" },
-          "classId": { "type": "integer", "nullable": true }
+          "classId": { "type": "integer", "nullable": true },
+          "mustChangePassword": { "type": "boolean" }
         }
       },
       "ClassWithSupervisor": {
@@ -956,6 +1128,7 @@
           "classId": { "type": "integer" },
           "firstName": { "type": "string" },
           "lastName": { "type": "string" },
+          "gender": { "$ref": "#/components/schemas/Gender" },
           "birthDate": { "type": "string", "format": "date-time" },
           "parentName": { "type": "string" },
           "parentWhatsapp": { "type": "string" },
@@ -980,7 +1153,7 @@
           "classId": { "type": "integer" },
           "className": { "type": "string" },
           "period": { "$ref": "#/components/schemas/AttendancePeriod" },
-          "subject": { "type": "string" },
+          "subject": { "$ref": "#/components/schemas/Subject" },
           "date": { "type": "string", "format": "date-time" },
           "total": { "type": "integer" },
           "presentCount": { "type": "integer" },
@@ -996,7 +1169,7 @@
           "studentName": { "type": "string" },
           "status": { "$ref": "#/components/schemas/AttendanceStatus" },
           "period": { "$ref": "#/components/schemas/AttendancePeriod" },
-          "subject": { "type": "string" },
+          "subject": { "$ref": "#/components/schemas/Subject" },
           "date": { "type": "string", "format": "date-time" }
         }
       },

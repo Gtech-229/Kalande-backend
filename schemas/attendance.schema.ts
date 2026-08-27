@@ -1,5 +1,6 @@
 import { z } from "zod";
-import { AttendancePeriod } from "@prisma/client";
+import { AttendancePeriod, Subject } from "@prisma/client";
+import { paginationQuerySchema } from "./pagination.schema";
 
 /**
  * Attendance request schemas. One file per domain (CLAUDE.md).
@@ -16,7 +17,7 @@ import { AttendancePeriod } from "@prisma/client";
  */
 export const submitAttendanceSchema = z.object({
   period: z.nativeEnum(AttendancePeriod),
-  subject: z.string().min(1, "Subject is required"),
+  subject: z.nativeEnum(Subject),
   date: z.coerce.date().optional(),
   absents: z
     .array(z.coerce.number().int().positive())
@@ -28,9 +29,11 @@ export type SubmitAttendanceInput = z.infer<typeof submitAttendanceSchema>;
  * GET /attendance/history?date=&period=&subject= — optional filters over the
  * supervisor's class history.
  */
-export const attendanceHistoryQuerySchema = z.object({
-  date: z.coerce.date().optional(),
-  period: z.nativeEnum(AttendancePeriod).optional(),
-  subject: z.string().min(1).optional(),
-});
+export const attendanceHistoryQuerySchema = z
+  .object({
+    date: z.coerce.date().optional(),
+    period: z.nativeEnum(AttendancePeriod).optional(),
+    subject: z.nativeEnum(Subject).optional(),
+  })
+  .merge(paginationQuerySchema);
 export type AttendanceHistoryQuery = z.infer<typeof attendanceHistoryQuerySchema>;

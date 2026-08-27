@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { Role } from "@prisma/client";
+import { paginationQuerySchema } from "./pagination.schema";
 
 /**
  * User request schemas. One file per domain (CLAUDE.md).
@@ -39,11 +40,13 @@ export const userIdParamSchema = z.object({
 });
 export type UserIdParam = z.infer<typeof userIdParamSchema>;
 
-export const listUsersQuerySchema = z.object({
-  role: z.nativeEnum(Role).optional(),
-  assigned: z
-    .enum(["true", "false"])
-    .transform((value) => value === "true")
-    .optional(),
-});
+export const listUsersQuerySchema = z
+  .object({
+    role: z.nativeEnum(Role).optional(),
+    assigned: z
+      .enum(["true", "false"])
+      .transform((value) => value === "true")
+      .optional(),
+  })
+  .merge(paginationQuerySchema);
 export type ListUsersQuery = z.infer<typeof listUsersQuerySchema>;

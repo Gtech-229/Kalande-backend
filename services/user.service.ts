@@ -4,6 +4,7 @@ import { AppError } from "../lib/AppError";
 import { hashPassword } from "../utils/password";
 import { generatePassword } from "../utils/generate-password";
 import { sendWelcomeEmail } from "./email.service";
+import { paginate, pageSkip, type Paginated } from "../utils/pagination";
 import type {
   CreateUserInput,
   ListUsersQuery,
@@ -24,6 +25,7 @@ type PublicUser = {
   email: string;
   role: Role;
   classId: number | null;
+  mustChangePassword: boolean;
 };
 
 /** Strip a User row down to the safe public shape. */
@@ -33,6 +35,7 @@ function toPublicUser(user: {
   email: string;
   role: Role;
   classId: number | null;
+  mustChangePassword: boolean;
 }): PublicUser {
   return {
     id: user.id,
@@ -40,6 +43,7 @@ function toPublicUser(user: {
     email: user.email,
     role: user.role,
     classId: user.classId,
+    mustChangePassword: user.mustChangePassword,
   };
 }
 
@@ -68,6 +72,8 @@ export async function createUser(input: CreateUserInput): Promise<PublicUser> {
       email: input.email,
       password,
       role: input.role,
+      // On a temporary password until they set their own.
+      mustChangePassword: true,
     },
   });
 
@@ -108,7 +114,8 @@ export async function resendWelcomeEmail(userId: number): Promise<void> {
 
   await db.user.update({
     where: { id: user.id },
-    data: { password: newPasswordHash },
+    // Back on a temporary password → must set their own again.
+    data: { password: newPasswordHash, mustChangePassword: true },
   });
 
   await sendWelcomeEmail({
@@ -124,7 +131,9 @@ export async function resendWelcomeEmail(userId: number): Promise<void> {
  * Used by the client to fetch users per role (e.g. supervisors to assign) and,
  * with assigned=false, only those not yet linked to a class.
  */
-export async function listUsers(filter: ListUsersQuery): Promise<PublicUser[]> {
+export async function listUsers(
+  filter: ListUsersQuery
+): Promise<Paginated<PublicUser>> {
   const where: Prisma.UserWhereInput = { deletedAt: null };
   if (filter.role) {
     where.role = filter.role;
@@ -134,10 +143,15 @@ export async function listUsers(filter: ListUsersQuery): Promise<PublicUser[]> {
     where.classId = filter.assigned ? { not: null } : null;
   }
 
-  const users = await db.user.findMany({
-    where,
-    orderBy: { name: "asc" },
-  });
+  const [users, total] = await Promise.all([
+    db.user.findMany({
+      where,
+      orderBy: { name: "asc" },
+      skip: pageSkip(filter.page, filter.limit),
+      take: filter.limit,
+    }),
+    db.user.count({ where }),
+  ]);
 
-  return users.map(toPublicUser);
+  return paginate(users.map(toPublicUser), total, filter.page, filter.limit);
 }
