@@ -46,6 +46,14 @@ export const forgotPasswordSchema = z.object({
 });
 export type ForgotPasswordInput = z.infer<typeof forgotPasswordSchema>;
 
+// Shared ?mode= query for the forgot/reset endpoints. "set" = first-time
+// password definition (welcome link), "reset" = forgot-password. Defaults to
+// reset so existing callers are unaffected.
+export const passwordModeQuerySchema = z.object({
+  mode: z.enum(["set", "reset"]).default("reset"),
+});
+export type PasswordModeQuery = z.infer<typeof passwordModeQuerySchema>;
+
 // POST /auth/reset-password — finish a reset with the emailed token.
 export const resetPasswordSchema = z.object({
   token: z.string().min(1, "Reset token is required"),

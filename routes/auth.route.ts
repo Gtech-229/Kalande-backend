@@ -11,6 +11,7 @@ import {
   forgotPasswordSchema,
   resetPasswordSchema,
   changePasswordSchema,
+  passwordModeQuerySchema,
 } from "../schemas/auth.schema";
 import {
   enrollDeviceSchema,
@@ -35,11 +36,13 @@ router.post("/logout", validate(logoutSchema), authController.logout);
 
 router.post(
   "/forgot-password",
+  validate(passwordModeQuerySchema, "query"),
   validate(forgotPasswordSchema),
   authController.forgotPassword
 );
 router.post(
   "/reset-password",
+  validate(passwordModeQuerySchema, "query"),
   validate(resetPasswordSchema),
   authController.resetPassword
 );

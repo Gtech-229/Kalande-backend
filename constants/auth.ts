@@ -17,6 +17,13 @@ export const SALT_ROUNDS = 12;
 export const RESET_TOKEN_TTL_MS = 60 * 60 * 1000;
 
 /**
+ * How long a SET (first-time password definition) token stays valid. Longer
+ * than a reset token because a newly-created user may take a while to act on
+ * their welcome email. Seven days.
+ */
+export const SET_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+
+/**
  * How long a PIN-login challenge (nonce) stays valid. Short on purpose: the
  * device requests it and signs it back within seconds. Single-use. Two minutes.
  */

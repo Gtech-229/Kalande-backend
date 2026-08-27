@@ -1,7 +1,10 @@
 import { Role } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
-import type { CreateClassInput } from "../schemas/class.schema";
+import type {
+  CreateClassInput,
+  UpdateClassInput,
+} from "../schemas/class.schema";
 
 /**
  * Class business logic. No Express types here (CLAUDE.md) — controllers adapt
@@ -160,6 +163,100 @@ export async function createClass(
       email: supervisor.email,
     },
   });
+}
+
+/**
+ * Rename a class and/or reassign its supervisor (PATCH). Both fields optional
+ * (at least one provided — enforced by the schema).
+ * - Fails if the class does not exist (or is deleted).
+ * - Renaming: fails if another class already has that name.
+ * - Reassigning: the new supervisor must exist, be a SUPERVISOR, and not already
+ *   run another class (same rules as create). The OLD supervisor is freed, and
+ *   the new one gets this class as their home class — all in one transaction.
+ *   Passing the current supervisor is a no-op for the supervisor part.
+ */
+export async function updateClass(
+  id: number,
+  input: UpdateClassInput
+): Promise<ClassWithSupervisor> {
+  const klass = await db.class.findFirst({
+    where: { id, deletedAt: null },
+  });
+  if (!klass) {
+    throw new AppError(404, "CLASS_NOT_FOUND", "Class not found");
+  }
+
+  // Name uniqueness (only if it actually changes), excluding this class.
+  if (input.name !== undefined && input.name !== klass.name) {
+    const nameTaken = await db.class.findFirst({
+      where: { name: input.name, id: { not: id } },
+    });
+    if (nameTaken) {
+      throw new AppError(409, "CLASS_NAME_TAKEN", "Class name already exists");
+    }
+  }
+
+  // Resolve the new supervisor only when it is actually changing.
+  let newSupervisorId: number | null = null;
+  if (
+    input.supervisorId !== undefined &&
+    input.supervisorId !== klass.supervisorId
+  ) {
+    const supervisor = await db.user.findFirst({
+      where: { id: input.supervisorId, deletedAt: null },
+    });
+    if (!supervisor) {
+      throw new AppError(404, "SUPERVISOR_NOT_FOUND", "Supervisor not found");
+    }
+    if (supervisor.role !== Role.SUPERVISOR) {
+      throw new AppError(
+        400,
+        "INVALID_SUPERVISOR",
+        "Selected user must be a SUPERVISOR account"
+      );
+    }
+    const alreadyAssigned = await db.class.findFirst({
+      where: { supervisorId: supervisor.id, deletedAt: null, id: { not: id } },
+    });
+    if (alreadyAssigned) {
+      throw new AppError(
+        409,
+        "SUPERVISOR_ALREADY_ASSIGNED",
+        "This supervisor already runs another class"
+      );
+    }
+    newSupervisorId = supervisor.id;
+  }
+
+  await db.$transaction(async (tx) => {
+    if (newSupervisorId !== null) {
+      // Free the outgoing supervisor (if any), then link the new one.
+      if (klass.supervisorId !== null) {
+        await tx.user.update({
+          where: { id: klass.supervisorId },
+          data: { classId: null },
+        });
+      }
+      await tx.user.update({
+        where: { id: newSupervisorId },
+        data: { classId: id },
+      });
+    }
+
+    await tx.class.update({
+      where: { id },
+      data: {
+        ...(input.name !== undefined ? { name: input.name } : {}),
+        ...(newSupervisorId !== null ? { supervisorId: newSupervisorId } : {}),
+      },
+    });
+  });
+
+  const updated = await db.class.findUnique({
+    where: { id },
+    include: { supervisor: { select: { id: true, name: true, email: true } } },
+  });
+  return toClassWithSupervisor(updated!);
 }
 
 /**

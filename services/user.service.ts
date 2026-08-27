@@ -1,9 +1,10 @@
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role, PasswordTokenType } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
 import { hashPassword } from "../utils/password";
 import { generatePassword } from "../utils/generate-password";
 import { sendWelcomeEmail } from "./email.service";
+import { issuePasswordToken } from "./auth.service";
 import { paginate, pageSkip, type Paginated } from "../utils/pagination";
 import type {
   CreateUserInput,
@@ -51,8 +52,10 @@ function toPublicUser(user: {
  * Create a SUPERVISOR or OPERATOR account with no class yet (classId = null).
  * The schema already blocks ADMIN, so we only check the email is free.
  *
- * The password is generated here (never sent by the client). We store only its
- * hash; the plaintext is emailed to the user in their welcome message.
+ * No password is sent to the client and no temporary password is emailed: we
+ * store an unusable random placeholder hash (so nobody can log in until the
+ * account is set up), then email a welcome link that lets the user DEFINE their
+ * own password (a single-use SET token).
  */
 export async function createUser(input: CreateUserInput): Promise<PublicUser> {
   const emailTaken = await db.user.findUnique({
@@ -62,37 +65,38 @@ export async function createUser(input: CreateUserInput): Promise<PublicUser> {
     throw new AppError(409, "EMAIL_TAKEN", "Email already registered");
   }
 
-  // Generate the password server-side and store only its bcrypt hash.
-  const temporaryPassword = generatePassword();
-  const password = await hashPassword(temporaryPassword);
+  // Unusable placeholder — the real password is defined via the welcome link.
+  const placeholderPassword = await hashPassword(generatePassword());
 
   const user = await db.user.create({
     data: {
       name: input.name,
       email: input.email,
-      password,
+      password: placeholderPassword,
       role: input.role,
-      // On a temporary password until they set their own.
+      // Until they define their own password via the welcome link.
       mustChangePassword: true,
     },
   });
 
-  // Email the credentials. Failure-safe: a send error is recorded as a FAILED
-  // EmailLog (resend later), so it never breaks account creation.
+  // Issue a SET token and email the welcome + set-password link. Failure-safe:
+  // a send error is recorded as a FAILED EmailLog (resend later), so it never
+  // breaks account creation.
+  const token = await issuePasswordToken(user.id, PasswordTokenType.SET);
   await sendWelcomeEmail({
     userId: user.id,
     to: user.email,
     name: user.name,
-    password: temporaryPassword,
+    token,
   });
 
   return toPublicUser(user);
 }
 
 /**
- * Resend the welcome email for an existing SUPERVISOR/OPERATOR account.
- * The original password is unrecoverable (only its hash is stored), so this
- * generates a NEW password, stores its hash, and emails the new one.
+ * Resend the welcome (set-password) email for an existing SUPERVISOR/OPERATOR
+ * account: issues a fresh SET token and emails the link again. Does NOT touch
+ * the stored password.
  */
 export async function resendWelcomeEmail(userId: number): Promise<void> {
   const user = await db.user.findFirst({
@@ -109,20 +113,12 @@ export async function resendWelcomeEmail(userId: number): Promise<void> {
     );
   }
 
-  const newTemporaryPassword = generatePassword();
-  const newPasswordHash = await hashPassword(newTemporaryPassword);
-
-  await db.user.update({
-    where: { id: user.id },
-    // Back on a temporary password → must set their own again.
-    data: { password: newPasswordHash, mustChangePassword: true },
-  });
-
+  const token = await issuePasswordToken(user.id, PasswordTokenType.SET);
   await sendWelcomeEmail({
     userId: user.id,
     to: user.email,
     name: user.name,
-    password: newTemporaryPassword,
+    token,
   });
 }
 

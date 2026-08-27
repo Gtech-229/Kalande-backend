@@ -3,6 +3,7 @@ import { asyncHandler } from "../utils/asyncHandler";
 import * as classService from "../services/class.service";
 import type {
   CreateClassInput,
+  UpdateClassInput,
   ClassIdParam,
 } from "../schemas/class.schema";
 
@@ -35,6 +36,18 @@ export const listClasses = asyncHandler(async (_req: Request, res: Response) => 
 export const createClass = asyncHandler(async (req: Request, res: Response) => {
   const data = await classService.createClass(req.body as CreateClassInput);
   res.status(201).json({ success: true, data });
+});
+
+/**
+ * @description Rename a class and/or reassign its supervisor
+ * @route   PATCH /api/classes/:id
+ * @access  ADMIN
+ * **/
+
+export const updateClass = asyncHandler(async (req: Request, res: Response) => {
+  const { id } = req.params as unknown as ClassIdParam;
+  const data = await classService.updateClass(id, req.body as UpdateClassInput);
+  res.status(200).json({ success: true, data });
 });
 
 /**

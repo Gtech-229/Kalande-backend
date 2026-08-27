@@ -14,30 +14,34 @@ export type RenderedEmail = {
   text: string;
 };
 
+/** Frontend link to the set/reset screen, carrying the one-time token + mode. */
+function passwordLink(token: string, mode: "set" | "reset"): string {
+  return `${env.APP_RESET_URL}?token=${token}&mode=${mode}`;
+}
+
 /**
- * Welcome email for a newly created account: contains the temporary password the
- * user logs in with (and should change afterwards).
+ * Welcome email for a newly created account: contains a link to DEFINE the
+ * password (no temporary password is issued anymore).
  */
 export function buildWelcomeEmail(params: {
   name: string;
-  email: string;
-  password: string;
+  token: string;
 }): RenderedEmail {
-  const subject = "Bienvenue sur ZASS — vos identifiants de connexion";
+  const subject = "Bienvenue sur ZASS — définissez votre mot de passe";
+  const link = passwordLink(params.token, "set");
 
   const text =
     `Bonjour ${params.name},\n\n` +
-    `Un compte ZASS a été créé pour vous.\n\n` +
-    `Email : ${params.email}\n` +
-    `Mot de passe provisoire : ${params.password}\n\n` +
-    `Connectez-vous puis changez votre mot de passe dès que possible.`;
+    `Un compte ZASS a été créé pour vous.\n` +
+    `Ouvrez ce lien pour définir votre mot de passe (valable 7 jours) :\n` +
+    `${link}\n\n` +
+    `Vous pourrez ensuite vous connecter et configurer votre code PIN.`;
 
   const html =
     `<p>Bonjour ${params.name},</p>` +
     `<p>Un compte ZASS a été créé pour vous.</p>` +
-    `<p><strong>Email :</strong> ${params.email}<br/>` +
-    `<strong>Mot de passe provisoire :</strong> ${params.password}</p>` +
-    `<p>Connectez-vous puis changez votre mot de passe dès que possible.</p>`;
+    `<p><a href="${link}">Définir mon mot de passe</a> (lien valable 7 jours).</p>` +
+    `<p>Vous pourrez ensuite vous connecter et configurer votre code PIN.</p>`;
 
   return { subject, html, text };
 }
@@ -51,19 +55,19 @@ export function buildPasswordResetEmail(params: {
   token: string;
 }): RenderedEmail {
   const subject = "Réinitialisation de votre mot de passe ZASS";
-  const resetLink = `${env.APP_RESET_URL}?token=${params.token}`;
+  const link = passwordLink(params.token, "reset");
 
   const text =
     `Bonjour ${params.name},\n\n` +
     `Vous avez demandé à réinitialiser votre mot de passe.\n` +
     `Ouvrez ce lien pour en choisir un nouveau (valable 1 heure) :\n` +
-    `${resetLink}\n\n` +
+    `${link}\n\n` +
     `Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.`;
 
   const html =
     `<p>Bonjour ${params.name},</p>` +
     `<p>Vous avez demandé à réinitialiser votre mot de passe.</p>` +
-    `<p><a href="${resetLink}">Choisir un nouveau mot de passe</a> (lien valable 1 heure).</p>` +
+    `<p><a href="${link}">Choisir un nouveau mot de passe</a> (lien valable 1 heure).</p>` +
     `<p>Si vous n'êtes pas à l'origine de cette demande, ignorez cet email.</p>`;
 
   return { subject, html, text };

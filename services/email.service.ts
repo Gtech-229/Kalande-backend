@@ -62,17 +62,16 @@ async function deliver(args: {
   }
 }
 
-/** Send the welcome email carrying a new account's temporary password. */
+/** Send the welcome email carrying a link to DEFINE the account's password. */
 export async function sendWelcomeEmail(params: {
   userId: number;
   to: string;
   name: string;
-  password: string;
+  token: string;
 }): Promise<void> {
   const content = buildWelcomeEmail({
     name: params.name,
-    email: params.to,
-    password: params.password,
+    token: params.token,
   });
   await deliver({
     to: params.to,

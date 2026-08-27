@@ -1,4 +1,4 @@
-import { Prisma, Role } from "@prisma/client";
+import { Prisma, Role, PasswordTokenType } from "@prisma/client";
 import { db } from "../config/database";
 import { AppError } from "../lib/AppError";
 import {
@@ -10,8 +10,8 @@ import {
 } from "../lib/jwt";
 import { hashPassword, comparePassword } from "../utils/password";
 import { hashToken, generateToken } from "../utils/token";
-import { sendPasswordResetEmail } from "./email.service";
-import { RESET_TOKEN_TTL_MS } from "../constants/auth";
+import { sendPasswordResetEmail, sendWelcomeEmail } from "./email.service";
+import { RESET_TOKEN_TTL_MS, SET_TOKEN_TTL_MS } from "../constants/auth";
 import type {
   RegisterInput,
   LoginInput,
@@ -20,6 +20,7 @@ import type {
   ForgotPasswordInput,
   ResetPasswordInput,
   ChangePasswordInput,
+  PasswordModeQuery,
 } from "../schemas/auth.schema";
 
 /**
@@ -239,14 +240,46 @@ export async function logout(input: LogoutInput): Promise<void> {
 }
 
 /**
- * Start the forgot-password flow.
- * Generates a single-use reset token, stores ONLY its hash (with an expiry), and
- * leaves the raw token to be emailed to the user.
+ * Issue a single-use password token (SET or RESET) for a user. Stores ONLY the
+ * SHA-256 hash, picks the TTL by type, and returns the raw token to be emailed.
+ * One active token per user: earlier ones are dropped first.
+ * Shared by the forgot-password flow and account creation (the welcome link).
+ */
+export async function issuePasswordToken(
+  userId: number,
+  type: PasswordTokenType
+): Promise<string> {
+  const rawToken = generateToken();
+  const ttl =
+    type === PasswordTokenType.SET ? SET_TOKEN_TTL_MS : RESET_TOKEN_TTL_MS;
+
+  await db.$transaction([
+    db.passwordResetToken.deleteMany({ where: { userId } }),
+    db.passwordResetToken.create({
+      data: {
+        token: hashToken(rawToken),
+        userId,
+        type,
+        expiresAt: new Date(Date.now() + ttl),
+      },
+    }),
+  ]);
+
+  return rawToken;
+}
+
+/**
+ * Start the forgot/set-password flow.
+ * `mode` = "reset" (forgot-password) or "set" (re-send a first-time definition
+ * link). Issues the matching token and emails the matching message.
  *
  * Always resolves the same way whether or not the email exists — we never reveal
  * which addresses have an account (no email enumeration).
  */
-export async function forgotPassword(input: ForgotPasswordInput): Promise<void> {
+export async function forgotPassword(
+  input: ForgotPasswordInput,
+  mode: PasswordModeQuery["mode"]
+): Promise<void> {
   const user = await db.user.findFirst({
     where: { email: input.email, deletedAt: null },
   });
@@ -256,28 +289,27 @@ export async function forgotPassword(input: ForgotPasswordInput): Promise<void> 
     return;
   }
 
-  const rawToken = generateToken();
+  const type =
+    mode === "set" ? PasswordTokenType.SET : PasswordTokenType.RESET;
+  const rawToken = await issuePasswordToken(user.id, type);
 
-  // Invalidate any earlier reset tokens for this user, then issue a fresh one.
-  await db.$transaction([
-    db.passwordResetToken.deleteMany({ where: { userId: user.id } }),
-    db.passwordResetToken.create({
-      data: {
-        token: hashToken(rawToken),
-        userId: user.id,
-        expiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
-      },
-    }),
-  ]);
-
-  // Email the reset link. Failure-safe: a send error is recorded as a FAILED
-  // EmailLog, so forgot-password still responds the same (no enumeration).
-  await sendPasswordResetEmail({
-    userId: user.id,
-    to: user.email,
-    name: user.name,
-    token: rawToken,
-  });
+  // Failure-safe emails: a send error is recorded as a FAILED EmailLog, so the
+  // endpoint still responds the same (no enumeration).
+  if (type === PasswordTokenType.SET) {
+    await sendWelcomeEmail({
+      userId: user.id,
+      to: user.email,
+      name: user.name,
+      token: rawToken,
+    });
+  } else {
+    await sendPasswordResetEmail({
+      userId: user.id,
+      to: user.email,
+      name: user.name,
+      token: rawToken,
+    });
+  }
 }
 
 /**

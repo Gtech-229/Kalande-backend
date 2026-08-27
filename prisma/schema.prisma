@@ -201,14 +201,22 @@ model Token {
   @@index([userId])
 }
 
-// One-time password reset token (forgot-password flow). The raw token is emailed
-// to the user; we store only its SHA-256 hash, so a DB leak can't reset accounts.
+// Why a password token was issued: SET = first-time definition for a new
+// account (long-lived, from the welcome email); RESET = forgot-password (short).
+enum PasswordTokenType {
+  SET
+  RESET
+}
+
+// One-time password token (set / reset flows). The raw token is emailed to the
+// user; we store only its SHA-256 hash, so a DB leak can't reset accounts.
 model PasswordResetToken {
   id        Int      @id @default(autoincrement())
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  token     String    @unique // SHA-256 hash of the raw token
+  token     String            @unique // SHA-256 hash of the raw token
+  type      PasswordTokenType @default(RESET)
   expiresAt DateTime
   // Set when the token is consumed — a token can be used at most once.
   usedAt    DateTime?

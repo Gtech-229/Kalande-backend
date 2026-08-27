@@ -22,6 +22,26 @@ export const createClassSchema = z.object({
 export type CreateClassInput = z.infer<typeof createClassSchema>;
 
 /**
+ * PATCH /classes/:id — rename a class and/or reassign its supervisor.
+ * Both fields optional, but at least one must be provided. A new supervisor must
+ * be an existing, unassigned SUPERVISOR (same rules as create); the old
+ * supervisor is freed automatically.
+ */
+export const updateClassSchema = z
+  .object({
+    name: z.string().min(1, "Class name is required").optional(),
+    supervisorId: z.coerce
+      .number()
+      .int()
+      .positive("A valid supervisor id is required")
+      .optional(),
+  })
+  .refine((data) => data.name !== undefined || data.supervisorId !== undefined, {
+    message: "At least one field must be provided",
+  });
+export type UpdateClassInput = z.infer<typeof updateClassSchema>;
+
+/**
  * DELETE /classes/:id — route param. Express gives strings, so coerce to number
  * (CLAUDE.md).
  */

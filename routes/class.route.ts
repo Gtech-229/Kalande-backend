@@ -9,6 +9,7 @@ import * as classController from "../controllers/class.controller";
 import * as operatorClassController from "../controllers/operator-class.controller";
 import {
   createClassSchema,
+  updateClassSchema,
   classIdParamSchema,
 } from "../schemas/class.schema";
 
@@ -35,6 +36,14 @@ router.post(
   authorize(Role.ADMIN),
   validate(createClassSchema),
   classController.createClass
+);
+
+router.patch(
+  "/:id",
+  authorize(Role.ADMIN),
+  validate(classIdParamSchema, "params"),
+  validate(updateClassSchema),
+  classController.updateClass
 );
 
 router.delete(

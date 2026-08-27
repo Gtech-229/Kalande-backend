@@ -137,9 +137,12 @@
     "/api/auth/forgot-password": {
       "post": {
         "tags": ["Auth"],
-        "summary": "Start a password reset — emails a reset link if the account exists",
-        "description": "Always returns the same response whether or not the email exists (no account enumeration).",
+        "summary": "Start a set/reset — emails the matching link if the account exists",
+        "description": "?mode=reset (default) sends a password-reset link (1h). ?mode=set sends a welcome/define-password link (7 days). Always returns the same response whether or not the email exists (no account enumeration).",
         "security": [],
+        "parameters": [
+          { "name": "mode", "in": "query", "schema": { "type": "string", "enum": ["set", "reset"], "default": "reset" } }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -150,15 +153,19 @@
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Message", "description": "If the account exists, a reset email was sent" }
+          "200": { "$ref": "#/components/responses/Message", "description": "If the account exists, an email was sent" }
         }
       }
     },
     "/api/auth/reset-password": {
       "post": {
         "tags": ["Auth"],
-        "summary": "Finish a password reset using the emailed token",
+        "summary": "Finish a set/reset using the emailed token",
+        "description": "Consumes any valid token (SET or RESET) and stores the new password. ?mode only tailors the response wording (set → \"Password defined\").",
         "security": [],
+        "parameters": [
+          { "name": "mode", "in": "query", "schema": { "type": "string", "enum": ["set", "reset"], "default": "reset" } }
+        ],
         "requestBody": {
           "required": true,
           "content": {
@@ -169,8 +176,8 @@
           }
         },
         "responses": {
-          "200": { "$ref": "#/components/responses/Message", "description": "Password updated" },
-          "400": { "$ref": "#/components/responses/Error", "description": "Reset token invalid or expired" }
+          "200": { "$ref": "#/components/responses/Message", "description": "Password defined / updated" },
+          "400": { "$ref": "#/components/responses/Error", "description": "Token invalid or expired" }
         }
       }
     },
@@ -322,7 +329,7 @@
       "post": {
         "tags": ["Users"],
         "summary": "Create a SUPERVISOR or OPERATOR account (ADMIN)",
-        "description": "No password is sent: the server generates one, stores its hash, and emails it (welcome email). The account starts with no class.",
+        "description": "No password is set: the account starts with an unusable placeholder, mustChangePassword=true, and a welcome email is sent with a link to DEFINE the password (a SET token). The account starts with no class.",
         "requestBody": {
           "required": true,
           "content": {
@@ -350,7 +357,8 @@
     "/api/users/{id}/resend-welcome": {
       "post": {
         "tags": ["Users"],
-        "summary": "Regenerate the password and resend the welcome email (ADMIN)",
+        "summary": "Resend the welcome / set-password link (ADMIN)",
+        "description": "Issues a fresh SET token and re-sends the welcome email. Does not change the stored password.",
         "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
         "responses": {
           "200": { "$ref": "#/components/responses/Message", "description": "Welcome email resent" },
@@ -405,6 +413,34 @@
       }
     },
     "/api/classes/{id}": {
+      "patch": {
+        "tags": ["Classes"],
+        "summary": "Rename a class and/or reassign its supervisor (ADMIN)",
+        "description": "Both fields optional, at least one required. A new supervisor must be an existing, unassigned SUPERVISOR (fetch candidates via GET /api/users?role=SUPERVISOR&assigned=false); the outgoing supervisor is freed automatically. Passing the current supervisor leaves it unchanged.",
+        "parameters": [{ "$ref": "#/components/parameters/IdPath" }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/UpdateClassRequest" },
+              "examples": {
+                "reassign": { "summary": "Change supervisor", "value": { "supervisorId": 7 } },
+                "rename": { "summary": "Rename", "value": { "name": "CP-B" } },
+                "both": { "summary": "Rename + reassign", "value": { "name": "CP-B", "supervisorId": 7 } }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated class",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "success": { "type": "boolean" }, "data": { "$ref": "#/components/schemas/ClassWithSupervisor" } } } } }
+          },
+          "404": { "$ref": "#/components/responses/Error", "description": "Class or supervisor not found" },
+          "409": { "$ref": "#/components/responses/Error", "description": "Class name taken, or supervisor already assigned" },
+          "400": { "$ref": "#/components/responses/Error", "description": "Selected user is not a SUPERVISOR" }
+        }
+      },
       "delete": {
         "tags": ["Classes"],
         "summary": "Soft-delete a class (ADMIN)",
@@ -972,6 +1008,14 @@
         "properties": {
           "name": { "type": "string" },
           "supervisorId": { "type": "integer", "minimum": 1 }
+        }
+      },
+      "UpdateClassRequest": {
+        "type": "object",
+        "minProperties": 1,
+        "properties": {
+          "name": { "type": "string" },
+          "supervisorId": { "type": "integer", "minimum": 1, "description": "New supervisor (must be an unassigned SUPERVISOR)." }
         }
       },
       "AssignClassRequest": {

@@ -9,6 +9,7 @@ import type {
   ForgotPasswordInput,
   ResetPasswordInput,
   ChangePasswordInput,
+  PasswordModeQuery,
 } from "../schemas/auth.schema";
 
 /**
@@ -65,32 +66,39 @@ export const logout = asyncHandler(async (req: Request, res: Response) => {
 });
 
 /**
- * @description Start a password reset — emails a reset token if the account exists
- * @route   POST /api/auth/forgot-password
+ * @description Start a set/reset — emails the matching link if the account exists
+ * @route   POST /api/auth/forgot-password?mode=set|reset
  * @access  Public
  * **/
 
 export const forgotPassword = asyncHandler(
   async (req: Request, res: Response) => {
-    await authService.forgotPassword(req.body as ForgotPasswordInput);
+    const { mode } = req.query as unknown as PasswordModeQuery;
+    await authService.forgotPassword(req.body as ForgotPasswordInput, mode);
     // Always the same response, whether or not the email exists (no enumeration).
     res.status(200).json({
       success: true,
-      data: { message: "If the account exists, a reset email has been sent" },
+      data: { message: "If the account exists, an email has been sent" },
     });
   }
 );
 
 /**
- * @description Finish a password reset using the emailed token
- * @route   POST /api/auth/reset-password
+ * @description Finish a set/reset using the emailed token
+ * @route   POST /api/auth/reset-password?mode=set|reset
  * @access  Public
  * **/
 
 export const resetPassword = asyncHandler(
   async (req: Request, res: Response) => {
+    const { mode } = req.query as unknown as PasswordModeQuery;
     await authService.resetPassword(req.body as ResetPasswordInput);
-    res.status(200).json({ success: true, data: { message: "Password updated" } });
+    res.status(200).json({
+      success: true,
+      data: {
+        message: mode === "set" ? "Password defined" : "Password updated",
+      },
+    });
   }
 );
 
